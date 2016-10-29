@@ -7,10 +7,11 @@ import (
 )
 
 func TestDelay(t *testing.T) {
-	eb := NewExpBackoffWithConfig(
-		100*time.Millisecond,
-		5*time.Second,
-		2.0)
+	eb := NewExpBackoffWithConfig(Config{
+		100 * time.Millisecond,
+		5 * time.Second,
+		2.0,
+	})
 	fmt.Println(eb.Delay())
 	fmt.Println(eb.Delay())
 	fmt.Println(eb.Delay())

@@ -5,39 +5,45 @@ import (
 	"time"
 )
 
-type ExpBackoff struct {
+type Config struct {
 	initialDelay time.Duration
 	maxDelay     time.Duration
 	expo         float64
-	delay        time.Duration
 }
+
+type ExpBackoff struct {
+	config Config
+	delay  time.Duration
+}
+
+var (
+	DefaultConfig = Config{
+		100 * time.Millisecond,
+		600000 * time.Millisecond,
+		2.0,
+	}
+	rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+)
 
 func NewExpBackoff() *ExpBackoff {
-	return NewExpBackoffWithConfig(
-		1*time.Second,
-		10*time.Minute,
-		2.0)
+	return NewExpBackoffWithConfig(DefaultConfig)
 }
 
-func NewExpBackoffWithConfig(initDelay, maxDelay time.Duration, expo float64) *ExpBackoff {
+func NewExpBackoffWithConfig(config Config) *ExpBackoff {
 	return &ExpBackoff{
-		initialDelay: initDelay,
-		maxDelay:     maxDelay,
-		expo:         expo,
-		delay:        initDelay,
+		config: config,
+		delay:  config.initialDelay,
 	}
 }
 
-var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
-
 func (e *ExpBackoff) Reset() {
-	e.delay = e.initialDelay
+	e.delay = e.config.initialDelay
 }
 
 func (e *ExpBackoff) Delay() time.Duration {
-	e.delay = e.delay * time.Duration(e.expo)
-	if e.delay > e.maxDelay {
-		e.delay = e.maxDelay
+	e.delay = e.delay * time.Duration(e.config.expo)
+	if e.delay > e.config.maxDelay {
+		e.delay = e.config.maxDelay
 	}
 	normal := time.Duration(rnd.Float64() * 0.1 * float64(time.Second))
 	e.delay = e.delay + normal
