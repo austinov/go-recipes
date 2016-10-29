@@ -11,16 +11,17 @@ func TestDelay(t *testing.T) {
 		100 * time.Millisecond,
 		5 * time.Second,
 		2.0,
+		0.1,
 	})
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
 	eb.Reset()
-	fmt.Println(eb.Delay())
-	fmt.Println(eb.Delay())
+	fmt.Println(<-eb.Delay())
+	fmt.Println(<-eb.Delay())
 }

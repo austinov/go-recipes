@@ -6,21 +6,24 @@ import (
 )
 
 type Config struct {
-	initialDelay time.Duration
-	maxDelay     time.Duration
-	expo         float64
+	MinDelay time.Duration
+	MaxDelay time.Duration
+	Expo     float64
+	Jitter   float64
 }
 
 type ExpBackoff struct {
-	config Config
-	delay  time.Duration
+	config   Config
+	delay    time.Duration
+	attempts uint64
 }
 
 var (
 	DefaultConfig = Config{
 		100 * time.Millisecond,
-		600000 * time.Millisecond,
+		10 * time.Minute,
 		2.0,
+		0.1,
 	}
 	rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
 )
@@ -32,20 +35,21 @@ func NewExpBackoff() *ExpBackoff {
 func NewExpBackoffWithConfig(config Config) *ExpBackoff {
 	return &ExpBackoff{
 		config: config,
-		delay:  config.initialDelay,
+		delay:  config.MinDelay,
 	}
 }
 
 func (e *ExpBackoff) Reset() {
-	e.delay = e.config.initialDelay
+	e.delay = e.config.MinDelay
+	e.attempts = 0
 }
 
-func (e *ExpBackoff) Delay() time.Duration {
-	e.delay = e.delay * time.Duration(e.config.expo)
-	if e.delay > e.config.maxDelay {
-		e.delay = e.config.maxDelay
+func (e *ExpBackoff) Delay() <-chan time.Time {
+	e.delay = e.delay * time.Duration(e.config.Expo)
+	if e.delay > e.config.MaxDelay {
+		e.delay = e.config.MaxDelay
 	}
-	normal := time.Duration(rnd.Float64() * 0.1 * float64(time.Second))
+	normal := time.Duration(rnd.Float64() * e.config.Jitter * float64(time.Second))
 	e.delay = e.delay + normal
-	return e.delay
+	return time.After(e.delay)
 }
