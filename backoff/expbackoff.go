@@ -31,7 +31,7 @@ var (
 	// DefaultConfig is the default ExpBackoff config.
 	DefaultConfig = Config{
 		100 * time.Millisecond,
-		10 * time.Minute,
+		1 * time.Minute,
 		2.0,
 		0.1,
 	}
@@ -45,6 +45,12 @@ func NewExpBackoff() *ExpBackoff {
 
 // NewExpBackoffWithConfig returns an ExpBackoff by passed configuration.
 func NewExpBackoffWithConfig(config Config) *ExpBackoff {
+	if config.MaxDelay == 0 {
+		config.MaxDelay = DefaultConfig.MaxDelay
+	}
+	if config.Expo == 0 {
+		config.Expo = DefaultConfig.Expo
+	}
 	return &ExpBackoff{
 		config: config,
 		delay:  config.MinDelay,
