@@ -3,18 +3,20 @@ package term
 import (
 	"errors"
 	"fmt"
+	"github.com/austinov/go-recipes/termo-chat/client/handler"
+	"github.com/austinov/go-recipes/termo-chat/client/view"
 	"log"
-	"sample/cui/client/handler"
-	"sample/cui/client/view"
 	"strings"
+	"time"
 
 	"github.com/jroimartin/gocui"
 )
 
 type (
 	Message struct {
-		From string
-		Msg  string
+		kind byte
+		from string
+		msg  string
 	}
 )
 
@@ -22,10 +24,7 @@ var (
 	done  = make(chan bool)
 	msgs  = make(chan Message)
 	peers = make(chan []string)
-	//wg    sync.WaitGroup
 )
-
-type OnSendMessage func(message string) error
 
 type termView struct {
 	gui      *gocui.Gui
@@ -43,16 +42,15 @@ func New(peerName string, sender handler.Sender) view.View {
 	}
 }
 
-func (v *termView) ReceiveMessage(from, message string) {
-	// TODO
+func (v *termView) ReceiveMessage(kind byte, from, message string) {
 	msgs <- Message{
-		From: from,
-		Msg:  message,
+		kind: kind,
+		from: from,
+		msg:  message,
 	}
 }
 
 func (v *termView) UpdatePeers(p []string) {
-	// TODO
 	peers <- p
 }
 
@@ -74,7 +72,6 @@ func (v *termView) Show() <-chan struct{} {
 		v.gui.SelFgColor = gocui.ColorBlack
 		v.gui.Cursor = true
 
-		//wg.Add(2)
 		go receiveMsg(v.gui)
 		go join(v.gui)
 
@@ -87,7 +84,6 @@ func (v *termView) Show() <-chan struct{} {
 }
 
 func (v *termView) Quit() {
-	// TODO
 	v.gui.Close()
 }
 
@@ -99,8 +95,8 @@ func (v *termView) sendMsg(g *gocui.Gui, vv *gocui.View) error {
 		}
 		v.sender.SendMessage(msg)
 		msgs <- Message{
-			From: v.peerName,
-			Msg:  msg,
+			from: v.peerName,
+			msg:  msg,
 		}
 		return clearCmd(vv)
 	}
@@ -108,18 +104,25 @@ func (v *termView) sendMsg(g *gocui.Gui, vv *gocui.View) error {
 }
 
 func receiveMsg(g *gocui.Gui) {
-	//defer wg.Done()
+	currDate := func() string {
+		return time.Now().Format("2 Jan 15:04")
+	}
 	for {
 		select {
 		case <-done:
 			return
 		case m := <-msgs:
 			g.Execute(func(g *gocui.Gui) error {
-				v, err := g.View("main")
+				v, err := g.View("chat")
 				if err != nil {
 					return err
 				}
-				fmt.Fprintln(v, m.From, ":", m.Msg)
+				if m.kind != view.ChatMessage {
+					fmt.Fprintf(v, "%v %s\n", currDate(), view.MessageKinds[m.kind])
+					fmt.Fprintf(v, "%s\n\n", m.msg)
+				} else {
+					fmt.Fprintf(v, "%v %s: %s\n", currDate(), m.from, m.msg)
+				}
 				return nil
 			})
 		}
@@ -127,14 +130,13 @@ func receiveMsg(g *gocui.Gui) {
 }
 
 func join(g *gocui.Gui) {
-	//defer wg.Done()
 	for {
 		select {
 		case <-done:
 			return
 		case p := <-peers:
 			g.Execute(func(g *gocui.Gui) error {
-				v, err := g.View("side")
+				v, err := g.View("peers")
 				if err != nil {
 					return err
 				}
@@ -151,43 +153,41 @@ func join(g *gocui.Gui) {
 
 func layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	if v, err := g.SetView("side", 0, 0, int(0.2*float32(maxX)), maxY-5); err != nil {
+	if v, err := g.SetView("peers", 0, 0, int(0.2*float32(maxX)), maxY-5); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Side "
+		v.Title = " Peers "
 		v.Frame = true
-		if err := g.SetCurrentView("side"); err != nil {
+		if err := g.SetCurrentView("peers"); err != nil {
 			return err
 		}
 	}
-	if v, err := g.SetView("main", int(0.2*float32(maxX)), 0, maxX-1, maxY-5); err != nil {
+	if v, err := g.SetView("chat", int(0.2*float32(maxX)), 0, maxX-1, maxY-5); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Main "
+		v.Title = " Chat "
 		v.Frame = true
 		v.Wrap = true
 		v.Autoscroll = true
-		if err := g.SetCurrentView("main"); err != nil {
+		if err := g.SetCurrentView("chat"); err != nil {
 			return err
 		}
 	}
-	if v, err := g.SetView("cmdline", 0, maxY-5, maxX-1, maxY-1); err != nil {
+	if v, err := g.SetView("cmd", 0, maxY-5, maxX-1, maxY-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
-		v.Title = " Type message bellow "
+		v.Title = " Type your message bellow "
 		v.Frame = true
 		v.Wrap = true
-		v.Editable = true
-		v.Wrap = true
 		v.Autoscroll = false
-		if err := g.SetCurrentView("cmdline"); err != nil {
+		v.Editable = true
+		if err := g.SetCurrentView("cmd"); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -195,46 +195,32 @@ func (v *termView) keybindings() error {
 	if err := v.gui.SetKeybinding("", gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		return err
 	}
-	if err := v.gui.SetKeybinding("side", gocui.KeyCtrlSpace, gocui.ModNone, nextView); err != nil {
-		return err
+	// set general keybindings
+	for _, name := range []string{"peers", "chat", "cmd"} {
+		if err := v.gui.SetKeybinding(name, gocui.KeyCtrlSpace, gocui.ModNone, nextView); err != nil {
+			return err
+		}
+		if err := v.gui.SetKeybinding(name, gocui.KeyArrowDown, gocui.ModNone, cursorDown); err != nil {
+			return err
+		}
+		if err := v.gui.SetKeybinding(name, gocui.KeyArrowUp, gocui.ModNone, cursorUp); err != nil {
+			return err
+		}
 	}
-	if err := v.gui.SetKeybinding("main", gocui.KeyCtrlSpace, gocui.ModNone, nextView); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("cmdline", gocui.KeyCtrlSpace, gocui.ModNone, nextView); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("side", gocui.KeyArrowDown, gocui.ModNone, cursorDown); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("side", gocui.KeyArrowUp, gocui.ModNone, cursorUp); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("main", gocui.KeyArrowDown, gocui.ModNone, cursorDown); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("main", gocui.KeyArrowUp, gocui.ModNone, cursorUp); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("cmdline", gocui.KeyArrowDown, gocui.ModNone, cursorDown); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("cmdline", gocui.KeyArrowUp, gocui.ModNone, cursorUp); err != nil {
-		return err
-	}
-	if err := v.gui.SetKeybinding("cmdline", gocui.KeyEnter, gocui.ModNone, v.sendMsg); err != nil {
+	// set keybinding for input text and send on Enter
+	if err := v.gui.SetKeybinding("cmd", gocui.KeyEnter, gocui.ModNone, v.sendMsg); err != nil {
 		return err
 	}
 	return nil
 }
 
 func nextView(g *gocui.Gui, v *gocui.View) error {
-	if v == nil || v.Name() == "main" {
-		return g.SetCurrentView("cmdline")
-	} else if v.Name() == "side" {
-		return g.SetCurrentView("main")
+	if v == nil || v.Name() == "chat" {
+		return g.SetCurrentView("cmd")
+	} else if v.Name() == "peers" {
+		return g.SetCurrentView("chat")
 	}
-	return g.SetCurrentView("side")
+	return g.SetCurrentView("peers")
 }
 
 func cursorDown(g *gocui.Gui, v *gocui.View) error {

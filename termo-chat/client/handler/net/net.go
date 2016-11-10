@@ -2,14 +2,16 @@ package net
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net"
-	"sample/backoff"
-	"sample/cui/client/view"
-	"sample/cui/common/proto"
 	"time"
+
+	"github.com/austinov/go-recipes/backoff"
+	"github.com/austinov/go-recipes/termo-chat/client/view"
+	"github.com/austinov/go-recipes/termo-chat/common/proto"
 
 	"github.com/ugorji/go/codec"
 )
@@ -24,42 +26,56 @@ type NetHandler struct {
 	address  string
 	conn     net.Conn
 	roomId   string
-	peerName string
 	peerId   string
+	peerName string
 	view     view.View
 }
 
-func New(network, address string) *NetHandler {
+func New(network, address, peerName string) *NetHandler {
 	return &NetHandler{
-		network: network,
-		address: address,
-		peerId:  getPeerId(),
+		network:  network,
+		address:  address,
+		peerId:   getPeerId(),
+		peerName: peerName,
 	}
 }
 
-func (h *NetHandler) Init(v view.View) error {
-	h.view = v
+func (h *NetHandler) Init(v view.View, room string) error {
 	if err := h.connect(); err != nil {
 		return err
 	}
+	defer h.disconnect()
+
+	h.view = v
+	vch := h.view.Show()
+
 	dch := make(chan []byte)    // data channel
 	ech := make(chan error)     // error channel
 	done := make(chan struct{}) // done channel
 
-	//var wg sync.WaitGroup
-	//wg.Add(2)
 	go func() {
-		//defer wg.Done()
 		h.handleConnection(dch, ech, done)
 	}()
 	go func() {
-		//defer wg.Done()
 		h.processData(dch, ech, done)
 	}()
+
+	if room == "" {
+		if err := h.bookRoom(h.peerName); err != nil {
+			return errors.New(fmt.Sprintf("Error booking room: %s", err))
+		}
+	} else {
+		if err := h.joinRoom(room, h.peerName); err != nil {
+			return errors.New(fmt.Sprintf("Error joining room: %s", err))
+		}
+	}
+
+	<-vch
+
 	return nil
 }
 
-func (h *NetHandler) BookRoom(peerName string) error {
+func (h *NetHandler) bookRoom(peerName string) error {
 	h.peerName = peerName
 	p := proto.NewPacketData(
 		version,
@@ -71,7 +87,7 @@ func (h *NetHandler) BookRoom(peerName string) error {
 	return h.send(p)
 }
 
-func (h *NetHandler) JoinRoom(roomId, peerName string) error {
+func (h *NetHandler) joinRoom(roomId, peerName string) error {
 	h.roomId = roomId
 	h.peerName = peerName
 	p := proto.NewPacketData(
@@ -86,32 +102,25 @@ func (h *NetHandler) JoinRoom(roomId, peerName string) error {
 }
 
 func (h *NetHandler) SendMessage(message string) error {
-	log.Println("SendMessage", message)
 	p := proto.NewPacketData(
 		version,
 		proto.SendMsg,
 		proto.DataPacket{
+			RoomId:  h.roomId,
 			PeerId:  h.peerId,
 			Message: message,
 		})
-	log.Println("Client send", p)
 	return h.send(p)
-}
-
-func (h *NetHandler) Disconnect() {
-	h.closeConn()
 }
 
 func (h *NetHandler) connect() error {
 	h.closeConn()
-	attempts := attemptsToConnect
 	var err error
 	eb := backoff.NewExpBackoff()
 	for {
-		log.Println("Try connect to server...")
-		attempts -= 1
+		//log.Println("Try connect to server...")
 		if h.conn, err = net.Dial(h.network, h.address); err != nil {
-			if attempts == 0 {
+			if eb.Attempts() == uint64(attemptsToConnect) {
 				break
 			}
 			<-eb.Delay()
@@ -120,6 +129,10 @@ func (h *NetHandler) connect() error {
 		}
 	}
 	return err
+}
+
+func (h *NetHandler) disconnect() {
+	h.closeConn()
 }
 
 func (h *NetHandler) closeConn() {
@@ -165,7 +178,6 @@ func (h *NetHandler) handleConnection(dch chan<- []byte, ech chan<- error, done 
 				}
 				if err := h.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
 					ech <- err
-					log.Println("Try to re-connect to server from SetReadDeadline")
 					if ok := h.checkConnection(true, ech); !ok {
 						break
 					}
@@ -210,7 +222,7 @@ func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-cha
 			if version != msg.Version {
 				log.Printf("Unsupported protocol version: %d", msg.Version)
 			}
-			if msg.Err != nil {
+			if msg.Err != "" {
 				log.Println(msg.Err)
 			}
 			switch msg.Action {
@@ -221,26 +233,17 @@ func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-cha
 				}
 				h.roomId = msg.Data.RoomId
 				h.view.UpdatePeers(msg.Data.Peers)
-				//log.Println("BOOK", h.room)
 			case proto.JoinRoom:
-				//TODO
 				h.view.UpdatePeers(msg.Data.Peers)
-				//h.room.peers = msg.Data.Peers
-				//log.Println("JOIN", h.room)
 			case proto.SendMsg:
-				//TODO
-				//log.Println("SEND", msg.Data.Message)
-				h.view.ReceiveMessage("???", msg.Data.Message)
+				h.view.ReceiveMessage(view.ChatMessage, msg.Data.Sender, msg.Data.Message)
 			case proto.UpdateRoom:
-				//TODO
 				h.view.UpdatePeers(msg.Data.Peers)
-				//h.room.peers = msg.Data.Peers
-				//log.Println("UPDATE", msg.Data)
 			default:
 				log.Printf("Unexpected protocol action: %d", msg.Action)
 			}
 		case err := <-ech:
-			log.Println("READ ERR", err)
+			h.view.ReceiveMessage(view.ErrorMessage, "", err.Error())
 		}
 	}
 }

@@ -18,7 +18,7 @@ type Packet struct {
 	Version byte
 	Action  byte
 	Data    DataPacket
-	Err     error
+	Err     string
 }
 
 type DataPacket struct {
@@ -27,6 +27,7 @@ type DataPacket struct {
 	PeerName string
 	PeerId   string
 	Message  string
+	Sender   string
 }
 
 func NewPacket(version, action byte) Packet {
@@ -45,9 +46,13 @@ func NewPacketData(version, action byte, data DataPacket) Packet {
 }
 
 func NewPacketError(version, action byte, err error) Packet {
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
 	return Packet{
 		Version: version,
 		Action:  action,
-		Err:     err,
+		Err:     errStr,
 	}
 }

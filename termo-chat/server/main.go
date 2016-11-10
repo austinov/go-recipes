@@ -3,12 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/austinov/go-recipes/termo-chat/common/proto"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"sample/cui/common/proto"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -205,6 +205,7 @@ func bookRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: id,
 			Peers:  peersByRoomArray(room),
 		})
+	log.Printf("booked room: %#v\n", packet)
 	return send(conn, packet)
 }
 
@@ -250,6 +251,7 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: p.Data.RoomId,
 			Peers:  peers,
 		})
+	log.Printf("joined room: %#v\n", pd)
 	return sendOthers(pd, room, p.Data.PeerId)
 }
 
@@ -261,11 +263,14 @@ func sendMsg(conn net.Conn, p proto.Packet) error {
 	room := rooms[p.Data.RoomId]
 	pd := proto.NewPacketData(
 		version,
-		proto.JoinRoom,
+		proto.SendMsg,
 		proto.DataPacket{
+			RoomId:  p.Data.RoomId,
+			Peers:   peersByRoomArray(room),
 			Message: p.Data.Message,
+			Sender:  room.peers[p.Data.PeerId].name,
 		})
-	log.Println("Server send", pd)
+	log.Printf("Server send other peer=%v, packet=%#v\n", p.Data.PeerId, pd)
 	return sendOthers(pd, room, p.Data.PeerId)
 }
 
@@ -277,9 +282,10 @@ func leaveRoom(conn net.Conn, p proto.Packet) error {
 	return nil
 }
 
-func sendOthers(packet proto.Packet, room room, mac string) error {
-	for m, p := range room.peers {
-		if m != mac {
+func sendOthers(packet proto.Packet, room room, peerId string) error {
+	for id, p := range room.peers {
+		if id != peerId {
+			log.Printf("sendOther peer=%v, to=%#v\n", peerId, packet)
 			send(p.conn, packet)
 		}
 	}
