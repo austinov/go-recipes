@@ -42,7 +42,7 @@ func New(peerName string, sender handler.Sender) view.View {
 	}
 }
 
-func (v *termView) ReceiveMessage(kind byte, from, message string) {
+func (v *termView) ViewMessage(kind byte, from, message string) {
 	msgs <- Message{
 		kind: kind,
 		from: from,
@@ -61,7 +61,10 @@ func (v *termView) Show() <-chan struct{} {
 		if err := v.gui.Init(); err != nil {
 			log.Panic(err)
 		}
-		defer v.gui.Close()
+		defer func() {
+			v.gui.Close()
+			quit <- struct{}{}
+		}()
 
 		v.gui.SetLayout(layout)
 
@@ -78,7 +81,6 @@ func (v *termView) Show() <-chan struct{} {
 		if err := v.gui.MainLoop(); err != nil && err != gocui.ErrQuit {
 			log.Panic(err)
 		}
-		quit <- struct{}{}
 	}()
 	return quit
 }
@@ -93,10 +95,10 @@ func (v *termView) sendMsg(g *gocui.Gui, vv *gocui.View) error {
 		if msg == "" {
 			return nil
 		}
-		v.sender.SendMessage(msg)
-		msgs <- Message{
-			from: v.peerName,
-			msg:  msg,
+		if err := v.sender.SendMessage(msg); err != nil {
+			v.ViewMessage(view.ErrorMessage, "", err.Error())
+		} else {
+			v.ViewMessage(view.ChatMessage, v.peerName, msg)
 		}
 		return clearCmd(vv)
 	}
@@ -117,11 +119,13 @@ func receiveMsg(g *gocui.Gui) {
 				if err != nil {
 					return err
 				}
-				if m.kind != view.ChatMessage {
-					fmt.Fprintf(v, "%v %s\n", currDate(), view.MessageKinds[m.kind])
-					fmt.Fprintf(v, "%s\n\n", m.msg)
+				if m.kind == view.TailMessage {
+					fmt.Fprintf(v, "%s", m.msg)
+				} else if m.kind != view.ChatMessage {
+					fmt.Fprintf(v, "\n%v %s", currDate(), view.MessageKinds[m.kind])
+					fmt.Fprintf(v, "\n%s", m.msg)
 				} else {
-					fmt.Fprintf(v, "%v %s: %s\n", currDate(), m.from, m.msg)
+					fmt.Fprintf(v, "\n%v %s: %s", currDate(), m.from, m.msg)
 				}
 				return nil
 			})

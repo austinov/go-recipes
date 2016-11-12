@@ -17,8 +17,8 @@ func New(sender handler.Sender) view.View {
 	}
 }
 
-func (v *simpleView) ReceiveMessage(kind byte, from, message string) {
-	log.Println("ReceiveMessage", from, message)
+func (v *simpleView) ViewMessage(kind byte, from, message string) {
+	log.Println("ViewMessage", kind, from, message)
 }
 
 func (v *simpleView) UpdatePeers(p []string) {

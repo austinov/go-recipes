@@ -35,10 +35,10 @@ var (
 	netw        = "tcp"   // TODO from flags
 	laddr       = ":8822" // TODO from flags
 	closed      = false
-	listener    net.Listener
 	rooms       = make(map[string]room)     // key is room id
 	conns       = make(map[net.Conn]string) // value is room id
 	readTimeout = 20 * time.Second
+	listener    net.Listener
 )
 
 func main() {
@@ -111,7 +111,7 @@ func receive(conn net.Conn, done <-chan struct{}) {
 				<-time.After(time.Second)
 			} else {
 				if err := func() error {
-					p, err := decode(b)
+					p, err := proto.Decode(b)
 					if err != nil {
 						return err
 					}
@@ -347,14 +347,4 @@ func deletePeer(r room, p peer) {
 			Peers:  peers,
 		})
 	sendOthers(pd, r, p.id)
-}
-
-func decode(b []byte) (proto.Packet, error) {
-	var (
-		p  proto.Packet
-		mh codec.MsgpackHandle
-	)
-	dec := codec.NewDecoderBytes(b, &mh)
-	err := dec.Decode(&p)
-	return p, err
 }

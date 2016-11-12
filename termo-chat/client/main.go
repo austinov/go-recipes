@@ -9,13 +9,12 @@ import (
 	"strings"
 
 	"github.com/austinov/go-recipes/termo-chat/client/handler/net"
+	_ "github.com/austinov/go-recipes/termo-chat/client/view/simple"
 	"github.com/austinov/go-recipes/termo-chat/client/view/term"
 )
 
 // TODO network from flags
 // TODO address from flags
-// TODO preambula
-// TODO error, info messages
 
 func main() {
 	userName := getUserName()
@@ -26,10 +25,9 @@ func main() {
 
 	hdl := net.New("tcp", ":8822", userName)
 	view := term.New(userName, hdl)
+	//view := simple.New(hdl)
 
-	if err := hdl.Init(view, room); err != nil {
-		log.Fatal(err)
-	}
+	hdl.Init(view, room)
 }
 
 func getUserName() string {
@@ -40,7 +38,7 @@ func getUserName() string {
 	reader := bufio.NewReader(os.Stdin)
 	name := ""
 	for name == "" {
-		fmt.Printf("Please type your nick name [%s]: ", u.Username)
+		fmt.Printf("Please type your user name [%s]: ", u.Username)
 		name, _ = reader.ReadString('\n')
 		if len(name) > 0 {
 			name = strings.TrimRight(name, "\n")

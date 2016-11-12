@@ -1,5 +1,7 @@
 package proto
 
+import "github.com/ugorji/go/codec"
+
 // Actions for communicate with server
 const (
 	// this action used to book room for chat and join user to it
@@ -55,4 +57,14 @@ func NewPacketError(version, action byte, err error) Packet {
 		Action:  action,
 		Err:     errStr,
 	}
+}
+
+func Decode(b []byte) (Packet, error) {
+	var (
+		p  Packet
+		mh codec.MsgpackHandle
+	)
+	dec := codec.NewDecoderBytes(b, &mh)
+	err := dec.Decode(&p)
+	return p, err
 }

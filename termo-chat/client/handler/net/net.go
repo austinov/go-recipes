@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"time"
 
@@ -18,7 +17,7 @@ import (
 
 const (
 	version           byte = 1
-	attemptsToConnect byte = 2
+	attemptsToConnect byte = 5
 )
 
 type NetHandler struct {
@@ -31,6 +30,9 @@ type NetHandler struct {
 	view     view.View
 }
 
+// TODO reconnect
+// TODO re-join
+
 func New(network, address, peerName string) *NetHandler {
 	return &NetHandler{
 		network:  network,
@@ -41,13 +43,16 @@ func New(network, address, peerName string) *NetHandler {
 }
 
 func (h *NetHandler) Init(v view.View, room string) error {
+	h.view = v
+	vch := h.view.Show()
+
 	if err := h.connect(); err != nil {
+		h.view.ViewMessage(view.InfoMessage, "", "Unable to connect to the server. Please, try later...")
+		<-time.After(5 * time.Second)
+		h.view.Quit()
 		return err
 	}
 	defer h.disconnect()
-
-	h.view = v
-	vch := h.view.Show()
 
 	dch := make(chan []byte)    // data channel
 	ech := make(chan error)     // error channel
@@ -73,6 +78,18 @@ func (h *NetHandler) Init(v view.View, room string) error {
 	<-vch
 
 	return nil
+}
+
+func (h *NetHandler) SendMessage(message string) error {
+	p := proto.NewPacketData(
+		version,
+		proto.SendMsg,
+		proto.DataPacket{
+			RoomId:  h.roomId,
+			PeerId:  h.peerId,
+			Message: message,
+		})
+	return h.send(p)
 }
 
 func (h *NetHandler) bookRoom(peerName string) error {
@@ -101,30 +118,29 @@ func (h *NetHandler) joinRoom(roomId, peerName string) error {
 	return h.send(p)
 }
 
-func (h *NetHandler) SendMessage(message string) error {
-	p := proto.NewPacketData(
-		version,
-		proto.SendMsg,
-		proto.DataPacket{
-			RoomId:  h.roomId,
-			PeerId:  h.peerId,
-			Message: message,
-		})
-	return h.send(p)
-}
+var (
+	tryConnectMsg = ""
+)
 
 func (h *NetHandler) connect() error {
+	if tryConnectMsg == "" {
+		tryConnectMsg = "Try to connect to the server..."
+		h.view.ViewMessage(view.InfoMessage, "", tryConnectMsg)
+	} else {
+		h.view.ViewMessage(view.TailMessage, "", "...")
+	}
 	h.closeConn()
 	var err error
 	eb := backoff.NewExpBackoff()
 	for {
-		//log.Println("Try connect to server...")
 		if h.conn, err = net.Dial(h.network, h.address); err != nil {
 			if eb.Attempts() == uint64(attemptsToConnect) {
 				break
 			}
 			<-eb.Delay()
 		} else {
+			tryConnectMsg = ""
+			h.view.ViewMessage(view.InfoMessage, "", "You are connected to the server!")
 			return nil
 		}
 	}
@@ -139,25 +155,13 @@ func (h *NetHandler) closeConn() {
 	if h.conn == nil {
 		return
 	}
-	defer h.conn.Close()
-	if h.roomId != "" {
-		p := proto.NewPacketData(
-			version,
-			proto.LeaveRoom,
-			proto.DataPacket{
-				RoomId: h.roomId,
-				PeerId: h.peerId,
-			})
-		if err := h.send(p); err != nil {
-			log.Printf("Error leaving room: %v", err)
-		}
-	}
+	h.conn.Close()
+	h.conn = nil
 }
 
 func (h *NetHandler) checkConnection(force bool, ech chan<- error) bool {
 	if h.conn == nil || force {
 		if err := h.connect(); err != nil {
-			ech <- err
 			return false
 		}
 	}
@@ -187,6 +191,8 @@ func (h *NetHandler) handleConnection(dch chan<- []byte, ech chan<- error, done 
 				if err != nil {
 					if neterr, ok := err.(net.Error); err != io.EOF && ok && !neterr.Timeout() {
 						ech <- err
+					} else if err == io.EOF {
+						h.checkConnection(true, ech)
 					}
 					break
 				} else {
@@ -215,40 +221,50 @@ func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-cha
 		case <-done:
 			return
 		case b := <-dch:
-			msg, err := decode(b)
+			msg, err := proto.Decode(b)
 			if err != nil {
-				log.Println(err)
+				h.view.ViewMessage(view.ErrorMessage, "", err.Error())
+				continue
 			}
 			if version != msg.Version {
-				log.Printf("Unsupported protocol version: %d", msg.Version)
+				h.view.ViewMessage(view.ErrorMessage, "", fmt.Sprintf("Unsupported protocol version: %d", msg.Version))
+				continue
 			}
 			if msg.Err != "" {
-				log.Println(msg.Err)
+				h.view.ViewMessage(view.ErrorMessage, "", msg.Err)
+				continue
 			}
 			switch msg.Action {
 			case proto.BookRoom:
 				if msg.Data.RoomId == "" {
-					log.Println("Incorrect data format: room not found")
+					h.view.ViewMessage(view.ErrorMessage, "", "Incorrect data format: room not found")
 					continue
 				}
 				h.roomId = msg.Data.RoomId
+				h.view.ViewMessage(view.InfoMessage, "",
+					fmt.Sprintf("You are booked  the room number %s. Please send this number to your peers to join the room.", h.roomId))
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.JoinRoom:
+				h.view.ViewMessage(view.InfoMessage, "",
+					fmt.Sprintf("You are joined  the room number %s.", h.roomId))
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.SendMsg:
-				h.view.ReceiveMessage(view.ChatMessage, msg.Data.Sender, msg.Data.Message)
+				h.view.ViewMessage(view.ChatMessage, msg.Data.Sender, msg.Data.Message)
 			case proto.UpdateRoom:
 				h.view.UpdatePeers(msg.Data.Peers)
 			default:
-				log.Printf("Unexpected protocol action: %d", msg.Action)
+				h.view.ViewMessage(view.ErrorMessage, "", fmt.Sprintf("Unexpected protocol action: %d", msg.Action))
 			}
 		case err := <-ech:
-			h.view.ReceiveMessage(view.ErrorMessage, "", err.Error())
+			h.view.ViewMessage(view.ErrorMessage, "", err.Error())
 		}
 	}
 }
 
 func (h *NetHandler) send(p proto.Packet) error {
+	if h.conn == nil {
+		return errors.New("Missing connection with the server.\n" + tryConnectMsg)
+	}
 	var (
 		b  []byte
 		mh codec.MsgpackHandle
@@ -258,20 +274,13 @@ func (h *NetHandler) send(p proto.Packet) error {
 		return err
 	}
 	_, err := h.conn.Write(b)
-	return err
+	if err != nil {
+		// write: broken pipe
+		return errors.New("Unable to send message to server: " + err.Error())
+	}
+	return nil
 }
 
-func decode(b []byte) (proto.Packet, error) {
-	var (
-		p  proto.Packet
-		mh codec.MsgpackHandle
-	)
-	dec := codec.NewDecoderBytes(b, &mh)
-	err := dec.Decode(&p)
-	return p, err
-}
-
-//TODO extract
 func getPeerId() string {
 	// generate 32 bits timestamp
 	unix32bits := uint32(time.Now().UTC().Unix())
