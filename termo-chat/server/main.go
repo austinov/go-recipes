@@ -1,17 +1,19 @@
 package main
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/austinov/go-recipes/termo-chat/common/proto"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/austinov/go-recipes/termo-chat/common/proto"
 
 	"github.com/ugorji/go/codec"
 )
@@ -22,12 +24,10 @@ const (
 
 type peer struct {
 	name string
-	id   string
 	conn net.Conn
 }
 
 type room struct {
-	id    string
 	peers map[string]peer // key is peer id
 }
 
@@ -35,10 +35,14 @@ var (
 	netw        = "tcp"   // TODO from flags
 	laddr       = ":8822" // TODO from flags
 	closed      = false
-	rooms       = make(map[string]room)     // key is room id
-	conns       = make(map[net.Conn]string) // value is room id
 	readTimeout = 20 * time.Second
 	listener    net.Listener
+
+	mur   sync.Mutex
+	rooms = make(map[string]room) // key is room id
+
+	muc   sync.Mutex
+	conns = make(map[net.Conn]string) // value is room id
 )
 
 func main() {
@@ -68,7 +72,7 @@ func main() {
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
-				log.Println("Accept error:", err)
+				log.Println("accept error:", err)
 				continue
 			}
 			go receive(conn, done)
@@ -106,7 +110,7 @@ func receive(conn net.Conn, done <-chan struct{}) {
 			}
 			if len(b) == 0 || rerr != nil {
 				if rerr != nil {
-					log.Println("Read error:", rerr)
+					log.Println("read error:", rerr)
 				}
 				<-time.After(time.Second)
 			} else {
@@ -141,11 +145,9 @@ func handleAction(conn net.Conn, p proto.Packet) error {
 	case proto.LeaveRoom:
 		return leaveRoom(conn, p)
 	default:
-		return sendError(conn, p.Version, p.Action, errors.New("Unexpected protocol action"))
+		return sendError(conn, p.Version, p.Action, errors.New("protocol action unexpected"))
 	}
 }
-
-var roomId uint32 = 0
 
 func peersByRoomArray(r room) []string {
 	peers := make([]string, len(r.peers))
@@ -159,53 +161,70 @@ func peersByRoomArray(r room) []string {
 
 func checkPacket(p proto.Packet) error {
 	if version != p.Version {
-		return errors.New("Unsupported protocol version")
+		return errors.New("protocol version unsupported")
 	}
 	if p.Data.PeerId == "" {
-		return errors.New("MAC not assigned")
+		return errors.New("peer id not assigned")
 	}
 	return nil
 }
 
 func checkPacketData(p proto.Packet) error {
 	if p.Data.RoomId == "" {
-		return errors.New("Unknown room number")
+		return errors.New("room number not assigned")
 	}
 	if p.Data.PeerId == "" {
-		return errors.New("MAC not assigned")
+		return errors.New("peer id not assigned")
 	}
-	if _, ok := rooms[p.Data.RoomId]; !ok {
-		return errors.New("Room not found")
+	if _, ok := getRoom(p.Data.RoomId); !ok {
+		return errors.New("room " + p.Data.RoomId + " not found")
 	}
 	return nil
 }
 
 func bookRoom(conn net.Conn, p proto.Packet) error {
-	// TODO generate room id
-	id := fmt.Sprintf("%d", atomic.AddUint32(&roomId, 1))
+	var roomId string
+	rebooked := false
+	if p.Data.RoomId != "" {
+		p.Action = proto.UpdateRoom
+		// re-book room, check existing room
+		if _, ok := getRoom(p.Data.RoomId); !ok {
+			// book room with came id
+			rebooked = true
+			roomId = p.Data.RoomId
+		} else {
+			// room exists join the peer
+			return joinRoom(conn, p)
+		}
+	} else {
+		roomId = generateRoomId()
+	}
 	peers := make(map[string]peer)
 	peers[p.Data.PeerId] = peer{
 		name: p.Data.PeerName,
-		id:   p.Data.PeerId,
 		conn: conn,
 	}
 	room := room{
-		id:    id,
 		peers: peers,
 	}
-	rooms[id] = room
+	setRoom(roomId, room)
 
 	// join connection with room
-	conns[conn] = id
+	setConnRoom(conn, roomId)
+	roomPeers := peersByRoomArray(room)
 
 	packet := proto.NewPacketData(
 		version,
-		proto.BookRoom,
+		p.Action,
 		proto.DataPacket{
-			RoomId: id,
-			Peers:  peersByRoomArray(room),
+			RoomId: roomId,
+			Peers:  roomPeers,
 		})
-	log.Printf("booked room: %#v\n", packet)
+	if rebooked {
+		log.Printf("peer [%s] re-booked the room %s - %v\n", p.Data.PeerId, roomId, roomPeers)
+	} else {
+		log.Printf("peer [%s] booked the room %s - %v\n", p.Data.PeerId, roomId, roomPeers)
+	}
 	return send(conn, packet)
 }
 
@@ -214,13 +233,15 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 		return sendError(conn, p.Version, p.Action, err)
 	}
 	// find room by id
-	room := rooms[p.Data.RoomId]
+	room, ok := getRoom(p.Data.RoomId)
+	if !ok {
+		return sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+	}
 	// find peer in the room by MAC
 	if pr, ok := room.peers[p.Data.PeerId]; !ok {
 		// if peer not found then add
 		room.peers[p.Data.PeerId] = peer{
 			name: p.Data.PeerName,
-			id:   p.Data.PeerId,
 			conn: conn,
 		}
 	} else if pr.name != p.Data.PeerName {
@@ -228,19 +249,19 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 	}
 	peers := peersByRoomArray(room)
 
-	p = proto.NewPacketData(
+	packet := proto.NewPacketData(
 		version,
-		proto.JoinRoom,
+		p.Action,
 		proto.DataPacket{
 			RoomId: p.Data.RoomId,
 			Peers:  peers,
 		})
 
 	// join connection with room
-	conns[conn] = room.id
+	setConnRoom(conn, p.Data.RoomId)
 
 	// send response only to initiator
-	if err := send(conn, p); err != nil {
+	if err := send(conn, packet); err != nil {
 		return err
 	}
 	// send update info to other peers
@@ -251,7 +272,7 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: p.Data.RoomId,
 			Peers:  peers,
 		})
-	log.Printf("joined room: %#v\n", pd)
+	log.Printf("peer [%s] joined the room %s - %v\n", p.Data.PeerId, p.Data.RoomId, peers)
 	return sendOthers(pd, room, p.Data.PeerId)
 }
 
@@ -260,7 +281,10 @@ func sendMsg(conn net.Conn, p proto.Packet) error {
 		return sendError(conn, p.Version, p.Action, err)
 	}
 	// find room by id
-	room := rooms[p.Data.RoomId]
+	room, ok := getRoom(p.Data.RoomId)
+	if !ok {
+		return sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+	}
 	pd := proto.NewPacketData(
 		version,
 		proto.SendMsg,
@@ -270,7 +294,6 @@ func sendMsg(conn net.Conn, p proto.Packet) error {
 			Message: p.Data.Message,
 			Sender:  room.peers[p.Data.PeerId].name,
 		})
-	log.Printf("Server send other peer=%v, packet=%#v\n", p.Data.PeerId, pd)
 	return sendOthers(pd, room, p.Data.PeerId)
 }
 
@@ -285,7 +308,6 @@ func leaveRoom(conn net.Conn, p proto.Packet) error {
 func sendOthers(packet proto.Packet, room room, peerId string) error {
 	for id, p := range room.peers {
 		if id != peerId {
-			log.Printf("sendOther peer=%v, to=%#v\n", peerId, packet)
 			send(p.conn, packet)
 		}
 	}
@@ -318,23 +340,25 @@ func closeListener() {
 }
 
 func closeConn(conn net.Conn) {
-	if roomId, ok := conns[conn]; ok {
-		room := rooms[roomId]
-		for id, peer := range room.peers {
-			if peer.conn == conn {
-				deletePeer(room, peer)
-				delete(room.peers, id)
-				break
+	if roomId, ok := getConnRoom(conn); ok {
+		if room, ok := getRoom(roomId); !ok {
+			for id, peer := range room.peers {
+				if peer.conn == conn {
+					deletePeer(roomId, room, id)
+					delete(room.peers, id)
+					// TODO remove empty room
+					break
+				}
 			}
 		}
-		delete(conns, conn)
+		deleteConn(conn)
 		conn.Close()
 	}
 }
 
-func deletePeer(r room, p peer) {
+func deletePeer(roomId string, r room, peerId string) {
 	// remove peer from room
-	delete(r.peers, p.id)
+	delete(r.peers, peerId)
 
 	// send update all but initiator
 	peers := peersByRoomArray(r)
@@ -343,8 +367,60 @@ func deletePeer(r room, p peer) {
 		version,
 		proto.UpdateRoom,
 		proto.DataPacket{
-			RoomId: r.id,
+			RoomId: roomId,
 			Peers:  peers,
 		})
-	sendOthers(pd, r, p.id)
+	sendOthers(pd, r, peerId)
+}
+
+func generateRoomId() string {
+	attempts := 10
+	buff := make([]byte, 5)
+	for {
+		numRead, err := rand.Read(buff)
+		if numRead != len(buff) || err != nil {
+			panic(err)
+		}
+		id := fmt.Sprintf("%x", buff[:])
+		if _, ok := getRoom(id); !ok {
+			return id
+		}
+		if attempts == 0 {
+			break
+		}
+		attempts--
+	}
+	panic(errors.New("unable to generate unique room id"))
+}
+
+func getRoom(id string) (room, bool) {
+	mur.Lock()
+	r, ok := rooms[id]
+	mur.Unlock()
+	return r, ok
+}
+
+func setRoom(id string, r room) {
+	mur.Lock()
+	rooms[id] = r
+	mur.Unlock()
+}
+
+func getConnRoom(c net.Conn) (string, bool) {
+	muc.Lock()
+	id, ok := conns[c]
+	muc.Unlock()
+	return id, ok
+}
+
+func setConnRoom(c net.Conn, id string) {
+	muc.Lock()
+	conns[c] = id
+	muc.Unlock()
+}
+
+func deleteConn(c net.Conn) {
+	muc.Lock()
+	delete(conns, c)
+	muc.Unlock()
 }

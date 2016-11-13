@@ -12,6 +12,8 @@ import (
 	"github.com/jroimartin/gocui"
 )
 
+// TODO hint space
+
 type (
 	Message struct {
 		kind byte
@@ -122,8 +124,7 @@ func receiveMsg(g *gocui.Gui) {
 				if m.kind == view.TailMessage {
 					fmt.Fprintf(v, "%s", m.msg)
 				} else if m.kind != view.ChatMessage {
-					fmt.Fprintf(v, "\n%v %s", currDate(), view.MessageKinds[m.kind])
-					fmt.Fprintf(v, "\n%s", m.msg)
+					fmt.Fprintf(v, "\n%v %s: %s", currDate(), view.MessageKinds[m.kind], m.msg)
 				} else {
 					fmt.Fprintf(v, "\n%v %s: %s", currDate(), m.from, m.msg)
 				}

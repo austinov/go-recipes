@@ -30,9 +30,6 @@ type NetHandler struct {
 	view     view.View
 }
 
-// TODO reconnect
-// TODO re-join
-
 func New(network, address, peerName string) *NetHandler {
 	return &NetHandler{
 		network:  network,
@@ -66,11 +63,11 @@ func (h *NetHandler) Init(v view.View, room string) error {
 	}()
 
 	if room == "" {
-		if err := h.bookRoom(h.peerName); err != nil {
+		if err := h.bookRoom(); err != nil {
 			return errors.New(fmt.Sprintf("Error booking room: %s", err))
 		}
 	} else {
-		if err := h.joinRoom(room, h.peerName); err != nil {
+		if err := h.joinRoom(room); err != nil {
 			return errors.New(fmt.Sprintf("Error joining room: %s", err))
 		}
 	}
@@ -92,21 +89,20 @@ func (h *NetHandler) SendMessage(message string) error {
 	return h.send(p)
 }
 
-func (h *NetHandler) bookRoom(peerName string) error {
-	h.peerName = peerName
+func (h *NetHandler) bookRoom() error {
 	p := proto.NewPacketData(
 		version,
 		proto.BookRoom,
 		proto.DataPacket{
+			RoomId:   h.roomId,
 			PeerName: h.peerName,
 			PeerId:   h.peerId,
 		})
 	return h.send(p)
 }
 
-func (h *NetHandler) joinRoom(roomId, peerName string) error {
+func (h *NetHandler) joinRoom(roomId string) error {
 	h.roomId = roomId
-	h.peerName = peerName
 	p := proto.NewPacketData(
 		version,
 		proto.JoinRoom,
@@ -123,13 +119,16 @@ var (
 )
 
 func (h *NetHandler) connect() error {
+	// first disconnect
+	h.disconnect()
+	// show message
 	if tryConnectMsg == "" {
 		tryConnectMsg = "Try to connect to the server..."
 		h.view.ViewMessage(view.InfoMessage, "", tryConnectMsg)
 	} else {
 		h.view.ViewMessage(view.TailMessage, "", "...")
 	}
-	h.closeConn()
+	// try connect
 	var err error
 	eb := backoff.NewExpBackoff()
 	for {
@@ -148,10 +147,6 @@ func (h *NetHandler) connect() error {
 }
 
 func (h *NetHandler) disconnect() {
-	h.closeConn()
-}
-
-func (h *NetHandler) closeConn() {
 	if h.conn == nil {
 		return
 	}
@@ -159,10 +154,14 @@ func (h *NetHandler) closeConn() {
 	h.conn = nil
 }
 
-func (h *NetHandler) checkConnection(force bool, ech chan<- error) bool {
-	if h.conn == nil || force {
+func (h *NetHandler) checkConnection(enforce bool, ech chan<- error) bool {
+	if h.conn == nil || enforce {
 		if err := h.connect(); err != nil {
 			return false
+		}
+		// re-book room with existence id
+		if err := h.bookRoom(); err != nil {
+			ech <- errors.New(fmt.Sprintf("Error re-booking room: %s", err))
 		}
 	}
 	return true
@@ -242,11 +241,11 @@ func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-cha
 				}
 				h.roomId = msg.Data.RoomId
 				h.view.ViewMessage(view.InfoMessage, "",
-					fmt.Sprintf("You are booked  the room number %s. Please send this number to your peers to join the room.", h.roomId))
+					fmt.Sprintf("You are booked the room number %s. Please send this number to your peers to join the room.", h.roomId))
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.JoinRoom:
 				h.view.ViewMessage(view.InfoMessage, "",
-					fmt.Sprintf("You are joined  the room number %s.", h.roomId))
+					fmt.Sprintf("You are joined the room number %s.", h.roomId))
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.SendMsg:
 				h.view.ViewMessage(view.ChatMessage, msg.Data.Sender, msg.Data.Message)
@@ -289,5 +288,6 @@ func getPeerId() string {
 	if numRead != len(buff) || err != nil {
 		panic(err)
 	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x-%x\n", unix32bits, buff[0:2], buff[2:4], buff[4:6], buff[6:8], buff[8:12])
+	return fmt.Sprintf("%x-%x-%x-%x-%x-%x",
+		unix32bits, buff[0:2], buff[2:4], buff[4:6], buff[6:8], buff[8:12])
 }

@@ -9,8 +9,8 @@ const (
 
 var MessageKinds = map[byte]string{
 	ChatMessage:  "",
-	InfoMessage:  "*** Info ***",
-	ErrorMessage: "*** Error ***",
+	InfoMessage:  "[Info]",
+	ErrorMessage: "[Error]",
 	TailMessage:  "",
 }
 
