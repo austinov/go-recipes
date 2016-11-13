@@ -3,19 +3,18 @@ package term
 import (
 	"errors"
 	"fmt"
-	"github.com/austinov/go-recipes/termo-chat/client/handler"
-	"github.com/austinov/go-recipes/termo-chat/client/view"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/austinov/go-recipes/termo-chat/client/handler"
+	"github.com/austinov/go-recipes/termo-chat/client/view"
+
 	"github.com/jroimartin/gocui"
 )
 
-// TODO hint space
-
 type (
-	Message struct {
+	message struct {
 		kind byte
 		from string
 		msg  string
@@ -24,7 +23,8 @@ type (
 
 var (
 	done  = make(chan bool)
-	msgs  = make(chan Message)
+	msgs  = make(chan message)
+	room  = make(chan string)
 	peers = make(chan []string)
 )
 
@@ -44,11 +44,15 @@ func New(peerName string, sender handler.Sender) view.View {
 	}
 }
 
-func (v *termView) ViewMessage(kind byte, from, message string) {
-	msgs <- Message{
+func (v *termView) ViewRoom(id string) {
+	room <- id
+}
+
+func (v *termView) ViewMessage(kind byte, from, msg string) {
+	msgs <- message{
 		kind: kind,
 		from: from,
-		msg:  message,
+		msg:  msg,
 	}
 }
 
@@ -147,9 +151,21 @@ func join(g *gocui.Gui) {
 				}
 				v.Clear()
 				v.SetCursor(0, 0)
+				fmt.Fprintf(v, "\n\n")
 				for _, peerName := range p {
 					fmt.Fprintln(v, peerName)
 				}
+				return nil
+			})
+		case id := <-room:
+			g.Execute(func(g *gocui.Gui) error {
+				v, err := g.View("room")
+				if err != nil {
+					return err
+				}
+				v.Clear()
+				v.SetCursor(0, 0)
+				fmt.Fprintf(v, "\n\n%s", id)
 				return nil
 			})
 		}
@@ -158,7 +174,17 @@ func join(g *gocui.Gui) {
 
 func layout(g *gocui.Gui) error {
 	maxX, maxY := g.Size()
-	if v, err := g.SetView("peers", 0, 0, int(0.2*float32(maxX)), maxY-5); err != nil {
+	if v, err := g.SetView("room", 0, 0, int(0.2*float32(maxX)), int(0.1*float32(maxY))); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Title = " Room "
+		v.Frame = true
+		if err := g.SetCurrentView("room"); err != nil {
+			return err
+		}
+	}
+	if v, err := g.SetView("peers", 0, int(0.1*float32(maxY)), int(0.2*float32(maxX)), int(0.8*float32(maxY))); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
@@ -168,25 +194,36 @@ func layout(g *gocui.Gui) error {
 			return err
 		}
 	}
-	if v, err := g.SetView("chat", int(0.2*float32(maxX)), 0, maxX-1, maxY-5); err != nil {
+	if v, err := g.SetView("hints", 0, int(0.8*float32(maxY)), int(0.2*float32(maxX)), int(0.9*float32(maxY))); err != nil {
+		if err != gocui.ErrUnknownView {
+			return err
+		}
+		v.Title = " Hints "
+		v.Frame = true
+		if err := g.SetCurrentView("hints"); err != nil {
+			return err
+		}
+		fmt.Fprintf(v, "\n\n")
+		fmt.Fprintf(v, "Ctrl+Space   Navigate between spaces\n")
+		fmt.Fprintf(v, "Ctrl+C       Close chat")
+	}
+	if v, err := g.SetView("chat", int(0.2*float32(maxX)), 0, maxX-1, int(0.9*float32(maxY))); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Title = " Chat "
 		v.Frame = true
-		v.Wrap = true
 		v.Autoscroll = true
 		if err := g.SetCurrentView("chat"); err != nil {
 			return err
 		}
 	}
-	if v, err := g.SetView("cmd", 0, maxY-5, maxX-1, maxY-1); err != nil {
+	if v, err := g.SetView("cmd", 0, int(0.9*float32(maxY)), maxX-1, maxY-1); err != nil {
 		if err != gocui.ErrUnknownView {
 			return err
 		}
 		v.Title = " Type your message bellow "
 		v.Frame = true
-		v.Wrap = true
 		v.Autoscroll = false
 		v.Editable = true
 		if err := g.SetCurrentView("cmd"); err != nil {
@@ -201,7 +238,7 @@ func (v *termView) keybindings() error {
 		return err
 	}
 	// set general keybindings
-	for _, name := range []string{"peers", "chat", "cmd"} {
+	for _, name := range []string{"room", "peers", "hints", "chat", "cmd"} {
 		if err := v.gui.SetKeybinding(name, gocui.KeyCtrlSpace, gocui.ModNone, nextView); err != nil {
 			return err
 		}

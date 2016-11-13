@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,18 +14,25 @@ import (
 	"github.com/austinov/go-recipes/termo-chat/client/view/term"
 )
 
-// TODO network from flags
-// TODO address from flags
-
 func main() {
-	userName := getUserName()
-	room := ""
-	if len(os.Args) > 1 {
-		room = os.Args[1]
-	}
+	var (
+		netw  = "tcp"
+		laddr string
+		room  string
+	)
+	flag.StringVar(&room, "room", "",
+		"Room identity")
 
-	hdl := net.New("tcp", ":8822", userName)
-	view := term.New(userName, hdl)
+	flag.StringVar(&laddr, "addr", ":8822",
+		"The syntax of addr is \"host:port\", like \"127.0.0.1:8822\". "+
+			"If host is omitted, as in \":8822\", Listen listens on all available interfaces.")
+
+	flag.Parse()
+
+	un := getUserName()
+
+	hdl := net.New(netw, laddr, un)
+	view := term.New(un, hdl)
 	//view := simple.New(hdl)
 
 	hdl.Init(view, room)

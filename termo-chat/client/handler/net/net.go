@@ -242,10 +242,12 @@ func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-cha
 				h.roomId = msg.Data.RoomId
 				h.view.ViewMessage(view.InfoMessage, "",
 					fmt.Sprintf("You are booked the room number %s. Please send this number to your peers to join the room.", h.roomId))
+				h.view.ViewRoom(h.roomId)
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.JoinRoom:
 				h.view.ViewMessage(view.InfoMessage, "",
 					fmt.Sprintf("You are joined the room number %s.", h.roomId))
+				h.view.ViewRoom(h.roomId)
 				h.view.UpdatePeers(msg.Data.Peers)
 			case proto.SendMsg:
 				h.view.ViewMessage(view.ChatMessage, msg.Data.Sender, msg.Data.Message)
@@ -274,7 +276,6 @@ func (h *NetHandler) send(p proto.Packet) error {
 	}
 	_, err := h.conn.Write(b)
 	if err != nil {
-		// write: broken pipe
 		return errors.New("Unable to send message to server: " + err.Error())
 	}
 	return nil

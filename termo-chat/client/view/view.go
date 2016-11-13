@@ -15,8 +15,9 @@ var MessageKinds = map[byte]string{
 }
 
 type View interface {
+	ViewRoom(id string)
 	ViewMessage(kind byte, from, message string)
-	UpdatePeers(p []string)
+	UpdatePeers(peers []string)
 	Show() <-chan struct{}
 	Quit()
 }

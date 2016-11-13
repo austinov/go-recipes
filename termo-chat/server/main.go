@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -32,8 +33,8 @@ type room struct {
 }
 
 var (
-	netw        = "tcp"   // TODO from flags
-	laddr       = ":8822" // TODO from flags
+	netw        = "tcp"
+	laddr       = ""
 	closed      = false
 	readTimeout = 20 * time.Second
 	listener    net.Listener
@@ -46,6 +47,12 @@ var (
 )
 
 func main() {
+	flag.StringVar(&laddr, "addr", ":8822",
+		"The syntax of addr is \"host:port\", like \"127.0.0.1:8822\". "+
+			"If host is omitted, as in \":8822\", Listen listens on all available interfaces.")
+
+	flag.Parse()
+
 	var err error
 	listener, err = net.Listen(netw, laddr)
 	if err != nil {
@@ -98,6 +105,8 @@ func receive(conn net.Conn, done <-chan struct{}) {
 				if err != nil {
 					if neterr, ok := err.(net.Error); err != io.EOF && ok && !neterr.Timeout() {
 						rerr = err
+					} else if err == io.EOF {
+						return
 					}
 					break
 				}
@@ -265,6 +274,7 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 		return err
 	}
 	// send update info to other peers
+	<-time.After(1 * time.Second)
 	pd := proto.NewPacketData(
 		version,
 		proto.UpdateRoom,
@@ -308,7 +318,9 @@ func leaveRoom(conn net.Conn, p proto.Packet) error {
 func sendOthers(packet proto.Packet, room room, peerId string) error {
 	for id, p := range room.peers {
 		if id != peerId {
-			send(p.conn, packet)
+			if err := send(p.conn, packet); err != nil {
+				log.Println("send message to others error:", err)
+			}
 		}
 	}
 	return nil
@@ -341,12 +353,10 @@ func closeListener() {
 
 func closeConn(conn net.Conn) {
 	if roomId, ok := getConnRoom(conn); ok {
-		if room, ok := getRoom(roomId); !ok {
+		if room, ok := getRoom(roomId); ok {
 			for id, peer := range room.peers {
 				if peer.conn == conn {
 					deletePeer(roomId, room, id)
-					delete(room.peers, id)
-					// TODO remove empty room
 					break
 				}
 			}
@@ -359,6 +369,10 @@ func closeConn(conn net.Conn) {
 func deletePeer(roomId string, r room, peerId string) {
 	// remove peer from room
 	delete(r.peers, peerId)
+	if len(r.peers) == 0 {
+		deleteRoom(roomId)
+		return
+	}
 
 	// send update all but initiator
 	peers := peersByRoomArray(r)
@@ -382,7 +396,8 @@ func generateRoomId() string {
 			panic(err)
 		}
 		id := fmt.Sprintf("%x", buff[:])
-		if _, ok := getRoom(id); !ok {
+		// add new room if it doesn't exist
+		if ok := setAbsentRoom(id, room{}); ok {
 			return id
 		}
 		if attempts == 0 {
@@ -397,12 +412,29 @@ func getRoom(id string) (room, bool) {
 	mur.Lock()
 	r, ok := rooms[id]
 	mur.Unlock()
-	return r, ok
+	return r, (ok && r.peers != nil)
 }
 
 func setRoom(id string, r room) {
 	mur.Lock()
 	rooms[id] = r
+	mur.Unlock()
+}
+
+// setAbsentRoom returns true if room was set
+func setAbsentRoom(id string, r room) bool {
+	mur.Lock()
+	defer mur.Unlock()
+	if _, ok := rooms[id]; !ok {
+		rooms[id] = r
+		return true
+	}
+	return false
+}
+
+func deleteRoom(id string) {
+	mur.Lock()
+	delete(rooms, id)
 	mur.Unlock()
 }
 
