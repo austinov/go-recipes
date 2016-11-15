@@ -44,16 +44,16 @@ func getUserName() string {
 		log.Fatal(err)
 	}
 	reader := bufio.NewReader(os.Stdin)
-	name := ""
-	for name == "" {
-		fmt.Printf("Please type your user name [%s]: ", u.Username)
-		name, _ = reader.ReadString('\n')
-		if len(name) > 0 {
-			name = strings.TrimRight(name, "\n")
-		}
-		if name == "" {
-			name = u.Username
-		}
+
+	fmt.Printf("Please type your user name [%s]: ", u.Username)
+	name, _ := reader.ReadString('\n')
+	if len(name) > 0 {
+		name = strings.TrimRight(name, "\n")
 	}
+	if name == "" {
+		name = u.Username
+	}
+	// clear screen
+	fmt.Print("\033[H\033[2J")
 	return name
 }

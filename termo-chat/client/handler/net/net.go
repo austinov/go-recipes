@@ -45,7 +45,7 @@ func (h *NetHandler) Init(v view.View, room string) error {
 
 	if err := h.connect(); err != nil {
 		h.view.ViewMessage(view.InfoMessage, "", "Unable to connect to the server. Please, try later...")
-		<-time.After(5 * time.Second)
+		<-time.After(3 * time.Second)
 		h.view.Quit()
 		return err
 	}

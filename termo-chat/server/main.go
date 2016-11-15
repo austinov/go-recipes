@@ -20,23 +20,32 @@ import (
 )
 
 const (
-	version = 1
+	version    = 1
+	numSenders = 2
 )
 
-type peer struct {
-	name string
-	conn net.Conn
-}
+type (
+	peer struct {
+		name string
+		conn net.Conn
+	}
 
-type room struct {
-	peers map[string]peer // key is peer id
-}
+	room struct {
+		peers map[string]peer // key is peer id
+	}
+
+	tube struct {
+		c net.Conn
+		p proto.Packet
+	}
+)
 
 var (
 	netw        = "tcp"
 	laddr       = ""
 	closed      = false
 	readTimeout = 20 * time.Second
+	tch         = make(chan tube) // channel to send messages
 	listener    net.Listener
 
 	mur   sync.Mutex
@@ -50,15 +59,14 @@ func main() {
 	flag.StringVar(&laddr, "addr", ":8822",
 		"The syntax of addr is \"host:port\", like \"127.0.0.1:8822\". "+
 			"If host is omitted, as in \":8822\", Listen listens on all available interfaces.")
-
 	flag.Parse()
 
 	var err error
-	listener, err = net.Listen(netw, laddr)
-	if err != nil {
+	if listener, err = net.Listen(netw, laddr); err != nil {
 		log.Fatal(err)
 	}
 	defer closeListener()
+	defer close(tch)
 
 	// handle interruption
 	done := make(chan struct{})
@@ -71,6 +79,11 @@ func main() {
 		close(done)
 		signal.Stop(interrupt)
 	}()
+
+	// start message senders
+	for i := 0; i < numSenders; i++ {
+		go send(done)
+	}
 
 	for {
 		select {
@@ -124,15 +137,12 @@ func receive(conn net.Conn, done <-chan struct{}) {
 				<-time.After(time.Second)
 			} else {
 				if err := func() error {
-					p, err := proto.Decode(b)
-					if err != nil {
+					if p, err := proto.Decode(b); err != nil {
 						return err
-					}
-					if err := checkPacket(p); err != nil {
+					} else if err := checkPacket(p); err != nil {
 						return err
-					}
-					if err := handleAction(conn, p); err != nil {
-						return err
+					} else {
+						handleAction(conn, p)
 					}
 					return nil
 				}(); err != nil {
@@ -143,18 +153,18 @@ func receive(conn net.Conn, done <-chan struct{}) {
 	}
 }
 
-func handleAction(conn net.Conn, p proto.Packet) error {
+func handleAction(conn net.Conn, p proto.Packet) {
 	switch p.Action {
 	case proto.BookRoom:
-		return bookRoom(conn, p)
+		bookRoom(conn, p)
 	case proto.JoinRoom:
-		return joinRoom(conn, p)
+		joinRoom(conn, p)
 	case proto.SendMsg:
-		return sendMsg(conn, p)
+		sendMsg(conn, p)
 	case proto.LeaveRoom:
-		return leaveRoom(conn, p)
+		leaveRoom(conn, p)
 	default:
-		return sendError(conn, p.Version, p.Action, errors.New("protocol action unexpected"))
+		sendError(conn, p.Version, p.Action, errors.New("protocol action unexpected"))
 	}
 }
 
@@ -191,7 +201,7 @@ func checkPacketData(p proto.Packet) error {
 	return nil
 }
 
-func bookRoom(conn net.Conn, p proto.Packet) error {
+func bookRoom(conn net.Conn, p proto.Packet) {
 	var roomId string
 	rebooked := false
 	if p.Data.RoomId != "" {
@@ -203,7 +213,8 @@ func bookRoom(conn net.Conn, p proto.Packet) error {
 			roomId = p.Data.RoomId
 		} else {
 			// room exists join the peer
-			return joinRoom(conn, p)
+			joinRoom(conn, p)
+			return
 		}
 	} else {
 		roomId = generateRoomId()
@@ -220,6 +231,7 @@ func bookRoom(conn net.Conn, p proto.Packet) error {
 
 	// join connection with room
 	setConnRoom(conn, roomId)
+
 	roomPeers := peersByRoomArray(room)
 
 	packet := proto.NewPacketData(
@@ -229,22 +241,24 @@ func bookRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: roomId,
 			Peers:  roomPeers,
 		})
+	tch <- tube{conn, packet}
 	if rebooked {
 		log.Printf("peer [%s] re-booked the room %s - %v\n", p.Data.PeerId, roomId, roomPeers)
 	} else {
 		log.Printf("peer [%s] booked the room %s - %v\n", p.Data.PeerId, roomId, roomPeers)
 	}
-	return send(conn, packet)
 }
 
-func joinRoom(conn net.Conn, p proto.Packet) error {
+func joinRoom(conn net.Conn, p proto.Packet) {
 	if err := checkPacketData(p); err != nil {
-		return sendError(conn, p.Version, p.Action, err)
+		sendError(conn, p.Version, p.Action, err)
+		return
 	}
 	// find room by id
 	room, ok := getRoom(p.Data.RoomId)
 	if !ok {
-		return sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+		sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+		return
 	}
 	// find peer in the room by MAC
 	if pr, ok := room.peers[p.Data.PeerId]; !ok {
@@ -256,8 +270,12 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 	} else if pr.name != p.Data.PeerName {
 		pr.name = p.Data.PeerName
 	}
+	// join connection with room
+	setConnRoom(conn, p.Data.RoomId)
+
 	peers := peersByRoomArray(room)
 
+	// send response only to initiator
 	packet := proto.NewPacketData(
 		version,
 		p.Action,
@@ -265,16 +283,9 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: p.Data.RoomId,
 			Peers:  peers,
 		})
+	tch <- tube{conn, packet}
 
-	// join connection with room
-	setConnRoom(conn, p.Data.RoomId)
-
-	// send response only to initiator
-	if err := send(conn, packet); err != nil {
-		return err
-	}
 	// send update info to other peers
-	<-time.After(1 * time.Second)
 	pd := proto.NewPacketData(
 		version,
 		proto.UpdateRoom,
@@ -282,18 +293,20 @@ func joinRoom(conn net.Conn, p proto.Packet) error {
 			RoomId: p.Data.RoomId,
 			Peers:  peers,
 		})
+	sendOthers(pd, room, p.Data.PeerId)
 	log.Printf("peer [%s] joined the room %s - %v\n", p.Data.PeerId, p.Data.RoomId, peers)
-	return sendOthers(pd, room, p.Data.PeerId)
 }
 
-func sendMsg(conn net.Conn, p proto.Packet) error {
+func sendMsg(conn net.Conn, p proto.Packet) {
 	if err := checkPacketData(p); err != nil {
-		return sendError(conn, p.Version, p.Action, err)
+		sendError(conn, p.Version, p.Action, err)
+		return
 	}
 	// find room by id
 	room, ok := getRoom(p.Data.RoomId)
 	if !ok {
-		return sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+		sendError(conn, p.Version, p.Action, errors.New("room "+p.Data.RoomId+" not found"))
+		return
 	}
 	pd := proto.NewPacketData(
 		version,
@@ -304,44 +317,47 @@ func sendMsg(conn net.Conn, p proto.Packet) error {
 			Message: p.Data.Message,
 			Sender:  room.peers[p.Data.PeerId].name,
 		})
-	return sendOthers(pd, room, p.Data.PeerId)
+	sendOthers(pd, room, p.Data.PeerId)
 }
 
-func leaveRoom(conn net.Conn, p proto.Packet) error {
+func leaveRoom(conn net.Conn, p proto.Packet) {
 	if err := checkPacketData(p); err != nil {
-		return sendError(conn, p.Version, p.Action, err)
+		sendError(conn, p.Version, p.Action, err)
+		return
 	}
 	closeConn(conn)
-	return nil
 }
 
-func sendOthers(packet proto.Packet, room room, peerId string) error {
+func sendOthers(packet proto.Packet, room room, peerId string) {
 	for id, p := range room.peers {
 		if id != peerId {
-			if err := send(p.conn, packet); err != nil {
-				log.Println("send message to others error:", err)
+			tch <- tube{p.conn, packet}
+		}
+	}
+}
+
+func sendError(conn net.Conn, version, action byte, err error) {
+	tch <- tube{conn, proto.NewPacketError(version, action, err)}
+}
+
+func send(done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case t := <-tch:
+			var (
+				b  []byte
+				mh codec.MsgpackHandle
+			)
+			enc := codec.NewEncoderBytes(&b, &mh)
+			if err := enc.Encode(t.p); err != nil {
+				log.Println(err)
+			} else if _, err := t.c.Write(b); err != nil {
+				log.Println(err)
 			}
 		}
 	}
-	return nil
-}
-
-func sendError(conn net.Conn, version, action byte, err error) error {
-	p := proto.NewPacketError(version, action, err)
-	return send(conn, p)
-}
-
-func send(conn net.Conn, p proto.Packet) error {
-	var (
-		b  []byte
-		mh codec.MsgpackHandle
-	)
-	enc := codec.NewEncoderBytes(&b, &mh)
-	if err := enc.Encode(p); err != nil {
-		return err
-	}
-	_, err := conn.Write(b)
-	return err
 }
 
 func closeListener() {
@@ -375,14 +391,12 @@ func deletePeer(roomId string, r room, peerId string) {
 	}
 
 	// send update all but initiator
-	peers := peersByRoomArray(r)
-
 	pd := proto.NewPacketData(
 		version,
 		proto.UpdateRoom,
 		proto.DataPacket{
 			RoomId: roomId,
-			Peers:  peers,
+			Peers:  peersByRoomArray(r),
 		})
 	sendOthers(pd, r, peerId)
 }
