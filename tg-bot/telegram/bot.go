@@ -2,11 +2,14 @@ package telegram
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,7 +26,9 @@ type Bot struct {
 	offset  uint64
 	updates chan []Update
 	replies chan Message
-	done    chan struct{}
+
+	mu   sync.Mutex
+	done chan struct{}
 }
 
 func New(token string) *Bot {
@@ -32,151 +37,156 @@ func New(token string) *Bot {
 	}
 	return &Bot{
 		token: token,
-		done:  make(chan struct{}),
 	}
 }
 
 func (b *Bot) Start() {
+	// reset offset to get all lost messages
+	atomic.StoreUint64(&b.offset, 0)
+
 	b.updates = make(chan []Update, numPollers)
 	b.replies = make(chan Message, numSenders)
-	defer close(b.updates)
-	defer close(b.replies)
+	b.mu.Lock()
+	b.done = make(chan struct{})
+	b.mu.Unlock()
 
-	go b.startPoll()
-	// TODO multiple processes
-	go b.startProcess()
-	// TODO multiple senders
-	go b.startReply()
+	var wg sync.WaitGroup
 
-	<-b.done
+	wg.Add(1)
+	go b.startPoll(&wg)
+	for i := 0; i < numPollers; i++ {
+		wg.Add(1)
+		go b.startProcess(&wg)
+	}
+	for i := 0; i < numSenders; i++ {
+		wg.Add(1)
+		go b.startReply(&wg)
+	}
+	wg.Wait()
 }
 
 func (b *Bot) Stop() {
+	b.mu.Lock()
 	close(b.done)
+	b.mu.Unlock()
 }
 
-func (b *Bot) startPoll() {
+func (b *Bot) startPoll(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		select {
 		case <-b.done:
 			return
-		case <-time.After(pollDelay):
-			b.poll()
+		default:
+			b.pollUpdates()
 		}
 	}
 }
 
-func (b *Bot) startProcess() {
+func (b *Bot) startProcess(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		select {
 		case <-b.done:
 			return
-		case updates := <-b.updates:
+		case updates, ok := <-b.updates:
+			if !ok {
+				return
+			}
 			for _, update := range updates {
-				go b.process(update)
+				go b.processMessage(update.Message)
 			}
 		}
 	}
 }
 
-func (b *Bot) startReply() {
+func (b *Bot) startReply(wg *sync.WaitGroup) {
+	defer wg.Done()
 	for {
 		select {
 		case <-b.done:
 			return
-		case reply := <-b.replies:
-			b.send(reply)
+		case r, ok := <-b.replies:
+			if !ok {
+				return
+			}
+			b.sendReply(r)
 		}
 	}
 }
 
-func (b *Bot) poll() {
+func (b *Bot) pollUpdates() {
 	log.Printf("Try to get updates...\n")
-	updateUrl := fmt.Sprintf(apiURL, b.token, "getUpdates")
+
 	values := url.Values{}
 	values.Add("timeout", pollTimeout)
-	values.Add("offset", fmt.Sprintf("%d", b.offset))
-
-	resp, err := http.PostForm(updateUrl, values)
-	if err != nil {
-		log.Printf("Post on getUpdates error: %#v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		log.Printf("StatusCode of getUpdates not OK [%d]\n", resp.StatusCode)
-		return
-	}
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Read response of getUpdates error: %#v\n", err)
-		return
-	}
+	values.Add("offset", fmt.Sprintf("%d", atomic.LoadUint64(&b.offset)))
 
 	var updates Updates
-	if err := json.Unmarshal(body, &updates); err != nil {
-		log.Printf("Unmarshal body of getUpdates error: %#v\n", err)
+	if err := b.postRequest("getUpdates", values, &updates); err != nil {
+		log.Println(err)
 		return
 	}
-	if !updates.Ok {
-		log.Printf("getUpdates error: error_code=%d, description=%s\n", updates.ErrorCode, updates.Description)
-		return
-	}
-	log.Printf("updates: %#v\n", updates)
-	if len(updates.Result) > 0 {
+	l := len(updates.Result)
+	if l > 0 {
+		// get last update id, increment it and store value into offset
+		atomic.StoreUint64(&b.offset, updates.Result[l-1].UpdateId+1)
 		b.updates <- updates.Result
 	}
 }
 
-func (b *Bot) process(update Update) {
-	log.Printf("Update: %#v\n\n", update)
-	// TODO thread safe
-	b.offset = update.UpdateId + 1
+func (b *Bot) processMessage(msg Message) {
+	log.Printf("Process message: %#v\n\n", msg)
 
 	b.replies <- Message{
-		Id: update.Message.Id,
+		Id: msg.Id,
 		Chat: Chat{
-			Id: update.Message.Chat.Id,
+			Id: msg.Chat.Id,
 		},
-		Text: update.Message.Text + "!!!",
+		// TODO handlers
+		Text: msg.Text + "!!!",
 	}
 }
 
-func (b *Bot) send(msg Message) {
-	sendUrl := fmt.Sprintf(apiURL, b.token, "sendMessage")
+func (b *Bot) sendReply(msg Message) {
+	log.Printf("Send reply: %#v\n\n", msg)
+
 	values := url.Values{}
 	values.Add("chat_id", fmt.Sprintf("%d", msg.Chat.Id))
 	values.Add("text", msg.Text)
 	values.Add("reply_to_message_id", fmt.Sprintf("%d", msg.Id))
 
-	resp, err := http.PostForm(sendUrl, values)
-	if err != nil {
-		log.Printf("Post on sendMessage error: %#v", err)
+	var result Result
+	if err := b.postRequest("sendMessage", values, &result); err != nil {
+		log.Println(err)
 		return
+	}
+}
+
+func (b *Bot) postRequest(command string, values url.Values, result interface{}) error {
+	commandUrl := fmt.Sprintf(apiURL, b.token, command)
+	resp, err := http.PostForm(commandUrl, values)
+	if err != nil {
+		return errors.New(fmt.Sprintf("Execute of %s error %#v", command, err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		log.Printf("StatusCode of sendMessage not OK [%d]\n", resp.StatusCode)
-		return
+		return errors.New(fmt.Sprintf("StatusCode of %s not OK [%d]\n", command, resp.StatusCode))
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Read response of sendMessag error: %#v\n", err)
-		return
+		return errors.New(fmt.Sprintf("Read response of %s error: %#v\n", command, err))
 	}
 
-	var result SendResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("Unmarshal body of sendMessage error: %#v\n", err)
-		return
+	if err := json.Unmarshal(body, result); err != nil {
+		return errors.New(fmt.Sprintf("Unmarshal body of %s error: %#v\n", command, err))
 	}
-	if !result.Ok {
-		log.Printf("getUpdates error: error_code=%d, description=%s\n", result.ErrorCode, result.Description)
-		return
+	if v, ok := result.(Responsable); ok {
+		if r := v.GetResponse(); !r.Ok {
+			return errors.New(fmt.Sprintf("%s error: error_code=%d, description=%s\n", command, r.ErrorCode, r.Description))
+		}
 	}
-	log.Printf("Result: %#v\n\n", result)
+	return nil
 }

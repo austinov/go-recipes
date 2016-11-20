@@ -1,5 +1,9 @@
 package telegram
 
+type Responsable interface {
+	GetResponse() Response
+}
+
 type Response struct {
 	Ok          bool   `json:"ok"`
 	ErrorCode   int    `json:"error_code"`
@@ -40,7 +44,15 @@ type Updates struct {
 	Result []Update `json:"result"`
 }
 
-type SendResult struct {
+func (u Updates) GetResponse() Response {
+	return u.Response
+}
+
+type Result struct {
 	Response
 	Message Message `json:"result"`
+}
+
+func (u Result) GetResponse() Response {
+	return u.Response
 }
