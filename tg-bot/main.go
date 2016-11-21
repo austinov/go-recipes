@@ -15,15 +15,17 @@ func main() {
 
 	b := telegram.New(token)
 	go func() {
-		<-time.After(10 * time.Second)
+		<-time.After(1 * time.Minute)
 		b.Stop()
 	}()
 	b.Start()
-	log.Println("Try new start")
+	log.Println("Stop the bot")
+
+	log.Println("Start again")
 	go func() {
-		<-time.After(10 * time.Second)
+		<-time.After(1 * time.Minute)
 		b.Stop()
 	}()
 	b.Start()
-	log.Println("Stop all")
+	log.Println("Stop final")
 }

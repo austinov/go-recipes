@@ -1,31 +1,37 @@
 package telegram
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
-	"net/url"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
 const (
-	apiURL      = "https://api.telegram.org/bot%s/%s"
-	pollTimeout = "30" // in seconds
-	pollDelay   = 1 * time.Second
-	numPollers  = 2
-	numSenders  = 3
+	apiURL          = "https://api.telegram.org/bot%s/%s"
+	pollTimeout     = 30 // seconds
+	pollDelay       = 1 * time.Second
+	numPollers      = 2
+	numSenders      = 3
+	reverseCommand  = "/reverse"
+	searchCommand   = "/search"
+	roulleteCommand = "/roullete"
 )
 
 type Bot struct {
 	token   string
 	offset  uint64
 	updates chan []Update
-	replies chan Message
+	replies chan Reply
 
 	mu   sync.Mutex
 	done chan struct{}
@@ -45,7 +51,7 @@ func (b *Bot) Start() {
 	atomic.StoreUint64(&b.offset, 0)
 
 	b.updates = make(chan []Update, numPollers)
-	b.replies = make(chan Message, numSenders)
+	b.replies = make(chan Reply, numSenders)
 	b.mu.Lock()
 	b.done = make(chan struct{})
 	b.mu.Unlock()
@@ -118,15 +124,16 @@ func (b *Bot) startReply(wg *sync.WaitGroup) {
 func (b *Bot) pollUpdates() {
 	log.Printf("Try to get updates...\n")
 
-	values := url.Values{}
-	values.Add("timeout", pollTimeout)
-	values.Add("offset", fmt.Sprintf("%d", atomic.LoadUint64(&b.offset)))
-
+	ur := UpdateParams{
+		Timeout: pollTimeout,
+		Offset:  atomic.LoadUint64(&b.offset),
+	}
 	var updates Updates
-	if err := b.postRequest("getUpdates", values, &updates); err != nil {
+	if err := b.postData("getUpdates", ur, &updates); err != nil {
 		log.Println(err)
 		return
 	}
+
 	l := len(updates.Result)
 	if l > 0 {
 		// get last update id, increment it and store value into offset
@@ -136,57 +143,157 @@ func (b *Bot) pollUpdates() {
 }
 
 func (b *Bot) processMessage(msg Message) {
-	log.Printf("Process message: %#v\n\n", msg)
+	log.Printf("Process message: %#v\n", msg)
 
-	b.replies <- Message{
-		Id: msg.Id,
-		Chat: Chat{
-			Id: msg.Chat.Id,
-		},
-		// TODO handlers
-		Text: msg.Text + "!!!",
+	trimCommand := func(command string) Message {
+		msg.Text = strings.Trim(strings.TrimPrefix(msg.Text, command), " ")
+		return msg
+	}
+
+	if strings.HasPrefix(msg.Text, reverseCommand) {
+		b.replies <- b.reverseHandler(trimCommand(reverseCommand))
+	} else if strings.HasPrefix(msg.Text, searchCommand) {
+		b.replies <- b.searchHandler(trimCommand(searchCommand))
+	} else if strings.HasPrefix(msg.Text, roulleteCommand) {
+		b.replies <- b.roulleteHandler(trimCommand(roulleteCommand))
+	} else {
+		if i, err := strconv.Atoi(msg.Text); err == nil && i > 0 && i < 11 {
+			b.replies <- b.spinRoullete(msg, i)
+		} else {
+			b.replies <- b.helpHandler(msg)
+		}
 	}
 }
 
-func (b *Bot) sendReply(msg Message) {
-	log.Printf("Send reply: %#v\n\n", msg)
-
-	values := url.Values{}
-	values.Add("chat_id", fmt.Sprintf("%d", msg.Chat.Id))
-	values.Add("text", msg.Text)
-	values.Add("reply_to_message_id", fmt.Sprintf("%d", msg.Id))
+func (b *Bot) sendReply(reply Reply) {
+	log.Printf("Send reply: %#v\n", reply)
 
 	var result Result
-	if err := b.postRequest("sendMessage", values, &result); err != nil {
+	if err := b.postData("sendMessage", reply, &result); err != nil {
 		log.Println(err)
-		return
 	}
 }
 
-func (b *Bot) postRequest(command string, values url.Values, result interface{}) error {
-	commandUrl := fmt.Sprintf(apiURL, b.token, command)
-	resp, err := http.PostForm(commandUrl, values)
+func (b *Bot) postData(method string, data interface{}, result interface{}) error {
+	commandUrl := fmt.Sprintf(apiURL, b.token, method)
+
+	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Execute of %s error %#v", command, err))
+		return errors.New(fmt.Sprintf("Marshal data of %s error: %#v\n", method, err))
+	}
+
+	req, err := http.NewRequest("POST", commandUrl, bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return errors.New(fmt.Sprintf("Execute of %s error %#v", method, err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return errors.New(fmt.Sprintf("StatusCode of %s not OK [%d]\n", command, resp.StatusCode))
+		return errors.New(fmt.Sprintf("StatusCode of %s not OK [%d]\n", method, resp.StatusCode))
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Read response of %s error: %#v\n", command, err))
+		return errors.New(fmt.Sprintf("Read response of %s error: %#v\n", method, err))
 	}
 
 	if err := json.Unmarshal(body, result); err != nil {
-		return errors.New(fmt.Sprintf("Unmarshal body of %s error: %#v\n", command, err))
+		return errors.New(fmt.Sprintf("Unmarshal body of %s error: %#v\n", method, err))
 	}
 	if v, ok := result.(Responsable); ok {
 		if r := v.GetResponse(); !r.Ok {
-			return errors.New(fmt.Sprintf("%s error: error_code=%d, description=%s\n", command, r.ErrorCode, r.Description))
+			return errors.New(fmt.Sprintf("%s error: error_code=%d, description=%s\n", method, r.ErrorCode, r.Description))
 		}
 	}
 	return nil
+}
+
+func (b *Bot) helpHandler(msg Message) Reply {
+	cmd := "Please, use the follow commands:\n" +
+		"/help - show this text\n" +
+		"/reverse [text] - reverse any text\n" +
+		"/search [text] - search any text in some engine\n" +
+		"/roullete - play roullete"
+	return Reply{
+		ChatId: msg.Chat.Id,
+		Text:   cmd,
+	}
+}
+
+func (b *Bot) reverseHandler(msg Message) Reply {
+	reverse := func(s string) string {
+		r := []rune(s)
+		for i, j := 0, len(r)-1; i < len(r)/2; i, j = i+1, j-1 {
+			r[i], r[j] = r[j], r[i]
+		}
+		return string(r)
+	}
+	return Reply{
+		ChatId: msg.Chat.Id,
+		Text:   reverse(msg.Text),
+		//ReplyToMessageId: msg.Id,
+	}
+}
+
+// searchHandler demonstrates inline keyboard buttons
+func (b *Bot) searchHandler(msg Message) Reply {
+	kb := []InlineKeyboardButton{
+		InlineKeyboardButton{
+			Text: "Yandex",
+			Url:  "https://yandex.ru/search/?text=" + msg.Text,
+		},
+		InlineKeyboardButton{
+			Text: "Google",
+			Url:  "https://www.google.com/search?q=" + msg.Text,
+		},
+	}
+	var keyboard [][]InlineKeyboardButton
+	keyboard = append(keyboard, kb)
+	rm := InlineKeyboardMarkup{
+		InlineKeyboard: keyboard,
+	}
+	return Reply{
+		ChatId:      msg.Chat.Id,
+		Text:        "Please select an engine",
+		ReplyMarkup: rm,
+	}
+
+}
+
+// roulleteHandler demonstrates reply keyboard buttons
+func (b *Bot) roulleteHandler(msg Message) Reply {
+	kb := make([]KeyboardButton, 10)
+	for i := 1; i < 11; i++ {
+		kb[i-1] = KeyboardButton{
+			Text: fmt.Sprintf("%d", i),
+		}
+	}
+	var keyboard [][]KeyboardButton
+	keyboard = append(keyboard, kb)
+	rm := ReplyKeyboardMarkup{
+		Keyboard:       keyboard,
+		ResizeKeyboard: true,
+	}
+	return Reply{
+		ChatId:      msg.Chat.Id,
+		Text:        "Please select a number",
+		ReplyMarkup: rm,
+	}
+}
+
+func (b *Bot) spinRoullete(msg Message, choice int) Reply {
+	r := rand.New(rand.NewSource(time.Now().UnixNano())).Intn(9) + 1
+	text := fmt.Sprintf("You missed the number - %d!", r)
+	if choice == r {
+		text = fmt.Sprintf("You guessed the number - %d!", choice)
+	}
+	return Reply{
+		ChatId:           msg.Chat.Id,
+		ReplyToMessageId: msg.Id,
+		Text:             text,
+	}
 }
