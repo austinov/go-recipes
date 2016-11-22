@@ -1,4 +1,4 @@
-package telegram
+package api
 
 type Responsable interface {
 	GetResponse() Response

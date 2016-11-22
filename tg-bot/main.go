@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/austinov/go-recipes/tg-bot/telegram"
+	"github.com/austinov/go-recipes/tg-bot/api"
 )
 
 func main() {
@@ -13,7 +13,7 @@ func main() {
 	flag.StringVar(&token, "t", "", "telegram token")
 	flag.Parse()
 
-	b := telegram.New(token)
+	b := api.New(token)
 	go func() {
 		<-time.After(1 * time.Minute)
 		b.Stop()
