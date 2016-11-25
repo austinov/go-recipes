@@ -1,4 +1,4 @@
-package api
+package bot
 
 import (
 	"bytes"
@@ -46,6 +46,9 @@ func New(token string) *Bot {
 	}
 }
 
+// Start runs bot to receive incoming updates using long polling,
+// to handle messages and to send replies into chat.
+// It blocks until the "Stop" method is called.
 func (b *Bot) Start() {
 	// reset offset to get all lost messages
 	atomic.StoreUint64(&b.offset, 0)
@@ -59,37 +62,38 @@ func (b *Bot) Start() {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go b.startPoll(&wg)
+	go b.pollUpdates(&wg)
 	for i := 0; i < numPollers; i++ {
 		wg.Add(1)
-		go b.startProcess(&wg)
+		go b.processUpdates(&wg)
 	}
 	for i := 0; i < numSenders; i++ {
 		wg.Add(1)
-		go b.startReply(&wg)
+		go b.processReplies(&wg)
 	}
 	wg.Wait()
 }
 
+// Stop initiates a stop of the bot.
 func (b *Bot) Stop() {
 	b.mu.Lock()
 	close(b.done)
 	b.mu.Unlock()
 }
 
-func (b *Bot) startPoll(wg *sync.WaitGroup) {
+func (b *Bot) pollUpdates(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
 		case <-b.done:
 			return
 		default:
-			b.pollUpdates()
+			b.poll()
 		}
 	}
 }
 
-func (b *Bot) startProcess(wg *sync.WaitGroup) {
+func (b *Bot) processUpdates(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
@@ -106,7 +110,7 @@ func (b *Bot) startProcess(wg *sync.WaitGroup) {
 	}
 }
 
-func (b *Bot) startReply(wg *sync.WaitGroup) {
+func (b *Bot) processReplies(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
@@ -121,7 +125,7 @@ func (b *Bot) startReply(wg *sync.WaitGroup) {
 	}
 }
 
-func (b *Bot) pollUpdates() {
+func (b *Bot) poll() {
 	log.Printf("Try to get updates...\n")
 
 	ur := UpdateParams{
@@ -129,7 +133,7 @@ func (b *Bot) pollUpdates() {
 		Offset:  atomic.LoadUint64(&b.offset),
 	}
 	var updates Updates
-	if err := b.postData("getUpdates", ur, &updates); err != nil {
+	if err := b.callAPI("getUpdates", ur, &updates); err != nil {
 		log.Println(err)
 		return
 	}
@@ -169,12 +173,12 @@ func (b *Bot) sendReply(reply Reply) {
 	log.Printf("Send reply: %#v\n", reply)
 
 	var result Result
-	if err := b.postData("sendMessage", reply, &result); err != nil {
+	if err := b.callAPI("sendMessage", reply, &result); err != nil {
 		log.Println(err)
 	}
 }
 
-func (b *Bot) postData(method string, data interface{}, result interface{}) error {
+func (b *Bot) callAPI(method string, data interface{}, result interface{}) error {
 	commandUrl := fmt.Sprintf(apiURL, b.token, method)
 
 	jsonData, err := json.Marshal(data)
@@ -212,6 +216,7 @@ func (b *Bot) postData(method string, data interface{}, result interface{}) erro
 	return nil
 }
 
+// helpHandler returns a reply containing help text.
 func (b *Bot) helpHandler(msg Message) Reply {
 	cmd := "Please, use the follow commands:\n" +
 		"/help - show this text\n" +
@@ -224,6 +229,7 @@ func (b *Bot) helpHandler(msg Message) Reply {
 	}
 }
 
+// reverseHandler returns reversed incoming text.
 func (b *Bot) reverseHandler(msg Message) Reply {
 	reverse := func(s string) string {
 		r := []rune(s)
@@ -239,7 +245,7 @@ func (b *Bot) reverseHandler(msg Message) Reply {
 	}
 }
 
-// searchHandler demonstrates inline keyboard buttons
+// searchHandler demonstrates the use of inline keyboard buttons.
 func (b *Bot) searchHandler(msg Message) Reply {
 	kb := []InlineKeyboardButton{
 		InlineKeyboardButton{
@@ -264,7 +270,7 @@ func (b *Bot) searchHandler(msg Message) Reply {
 
 }
 
-// roulleteHandler demonstrates reply keyboard buttons
+// roulleteHandler demonstrates the use of custom keyboard buttons.
 func (b *Bot) roulleteHandler(msg Message) Reply {
 	kb := make([]KeyboardButton, 10)
 	for i := 1; i < 11; i++ {
@@ -285,6 +291,7 @@ func (b *Bot) roulleteHandler(msg Message) Reply {
 	}
 }
 
+// spinRoullete returns reply for roullete game.
 func (b *Bot) spinRoullete(msg Message, choice int) Reply {
 	r := rand.New(rand.NewSource(time.Now().UnixNano())).Intn(9) + 1
 	text := fmt.Sprintf("You missed the number - %d!", r)
