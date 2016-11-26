@@ -183,7 +183,7 @@ func (b *Bot) callAPI(method string, data interface{}, result interface{}) error
 
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Marshal data of %s error: %#v\n", method, err))
+		return errors.New(fmt.Sprintf("Marshal data of %s error: %#v", method, err))
 	}
 
 	req, err := http.NewRequest("POST", commandUrl, bytes.NewBuffer(jsonData))
@@ -197,20 +197,20 @@ func (b *Bot) callAPI(method string, data interface{}, result interface{}) error
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return errors.New(fmt.Sprintf("StatusCode of %s not OK [%d]\n", method, resp.StatusCode))
+		return errors.New(fmt.Sprintf("Request %s failed with code %d", method, resp.StatusCode))
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Read response of %s error: %#v\n", method, err))
+		return errors.New(fmt.Sprintf("Read response of %s error: %#v", method, err))
 	}
 
 	if err := json.Unmarshal(body, result); err != nil {
-		return errors.New(fmt.Sprintf("Unmarshal body of %s error: %#v\n", method, err))
+		return errors.New(fmt.Sprintf("Unmarshal body of %s error: %#v", method, err))
 	}
 	if v, ok := result.(Responsable); ok {
 		if r := v.GetResponse(); !r.Ok {
-			return errors.New(fmt.Sprintf("%s error: error_code=%d, description=%s\n", method, r.ErrorCode, r.Description))
+			return errors.New(fmt.Sprintf("%s error: error_code=%d, description=%s", method, r.ErrorCode, r.Description))
 		}
 	}
 	return nil
