@@ -204,6 +204,7 @@ func layout(g *gocui.Gui) error {
 			return err
 		}
 		fmt.Fprintf(v, "\n\n")
+		fmt.Fprintf(v, "Enter        Send message")
 		fmt.Fprintf(v, "Ctrl+Space   Navigate between spaces\n")
 		fmt.Fprintf(v, "Ctrl+C       Close chat")
 	}
