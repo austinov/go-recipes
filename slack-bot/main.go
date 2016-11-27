@@ -1,15 +1,17 @@
 package main
 
 import (
-	"flag"
 	"github.com/austinov/go-recipes/slack-bot/bot"
+	"github.com/austinov/go-recipes/slack-bot/config"
+	"github.com/austinov/go-recipes/slack-bot/dao/redigo"
 )
 
 func main() {
-	var token string
-	flag.StringVar(&token, "t", "", "slack token")
-	flag.Parse()
+	cfg := config.GetConfig()
 
-	b := bot.New(token)
+	dao := redigo.New(cfg.Db)
+	defer dao.Close()
+
+	b := bot.New(cfg.Bot.Token, dao)
 	b.Start()
 }

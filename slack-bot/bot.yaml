@@ -1,0 +1,8 @@
+bot:
+  token: xxx
+
+db:
+  network: tcp # tcp/tcp4/tcp6/unix
+  address: redis:6379
+  username:
+  password:

@@ -9,6 +9,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/austinov/go-recipes/slack-bot/common"
+	"github.com/austinov/go-recipes/slack-bot/dao"
 
 	"golang.org/x/net/websocket"
 )
@@ -19,22 +23,21 @@ const (
 )
 
 type Bot struct {
-	token   string
-	id      string
-	ws      *websocket.Conn
-	updates chan Message
-	replies chan Message
-
-	//mu   sync.Mutex
-	done chan struct{}
+	token    string
+	id       string
+	ws       *websocket.Conn
+	messages chan Message
+	replies  chan Message
+	dao      dao.Dao
 }
 
-func New(token string) *Bot {
+func New(token string, dao dao.Dao) *Bot {
 	if token == "" {
 		log.Fatal("Token is empty")
 	}
 	return &Bot{
 		token: token,
+		dao:   dao,
 	}
 }
 
@@ -45,11 +48,8 @@ func (b *Bot) Start() {
 		log.Fatal(err)
 	}
 
-	b.updates = make(chan Message, 1)
+	b.messages = make(chan Message, 1)
 	b.replies = make(chan Message, 1)
-	//b.mu.Lock()
-	b.done = make(chan struct{})
-	//b.mu.Unlock()
 
 	var wg sync.WaitGroup
 
@@ -108,59 +108,29 @@ func (b *Bot) connect() error {
 func (b *Bot) pollMessages(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
-		select {
-		case <-b.done:
-			return
-		default:
-			b.poll()
-		}
+		b.poll()
 	}
 }
 
 func (b *Bot) processReplies(wg *sync.WaitGroup) {
 	defer wg.Done()
-	for {
-		select {
-		case <-b.done:
-			return
-		case r, ok := <-b.replies:
-			if !ok {
-				return
-			}
-			b.sendReply(r)
-		}
+	for reply := range b.replies {
+		b.sendReply(reply)
 	}
 }
 
 func (b *Bot) poll() {
-	log.Printf("Try to get updates...\n")
 	var m Message
 	if err := websocket.JSON.Receive(b.ws, &m); err != nil {
-		log.Fatal(err) // TODO
+		log.Fatal(err) // TODO backoff
 	}
-	b.updates <- m
+	b.messages <- m
 }
-
-/*
-func (b *Bot) getMessage() (Message, error) {
-	var m Message
-	err := websocket.JSON.Receive(b.ws, &m)
-	return m, err
-}
-*/
 
 func (b *Bot) processMessages(wg *sync.WaitGroup) {
 	defer wg.Done()
-	for {
-		select {
-		case <-b.done:
-			return
-		case message, ok := <-b.updates:
-			if !ok {
-				return
-			}
-			go b.processMessage(message)
-		}
+	for message := range b.messages {
+		go b.processMessage(message)
 	}
 }
 
@@ -188,20 +158,43 @@ func (b *Bot) processMessage(msg Message) {
 // helpHandler returns a reply containing help text.
 func (b *Bot) helpHandler() string {
 	return "Please, use the follow commands:\n" +
-		"calendar <band> [next|last] - show calendar for the band (next or last events, all events when no mode)\n"
+		"calendar <band> [next|past] - show calendar for the band (next or past events, all events when no mode)\n"
 }
 
 // calendarHandler returns calendar for the band.
 func (b *Bot) calendarHandler(band, mode string) string {
-	// TODO
-	return "TODO " + mode + " events for " + band + "\n"
+	// TODO count, offset
+	now := time.Now()
+	var from, to int64
+	switch mode {
+	case "all":
+		// all events
+		to = now.AddDate(10, 0, 0).Unix()
+	case "past":
+		// only past events to the present day
+		to = common.EndOfDate(now).Unix()
+	case "next":
+		// only future events
+		from = common.BeginOfDate(now).Unix()
+		to = now.AddDate(10, 0, 0).Unix()
+	default:
+		return b.helpHandler()
+	}
+	events, err := b.dao.GetCalendar(band, from, to)
+	if err != nil {
+		log.Println(err)
+		return "Sorry, we have some troubles"
+	} else {
+		return fmt.Sprintf("TODO %s (%v - %v) events for %s: %v\n", mode, time.Unix(from, 0), time.Unix(to, 0), band, events)
+	}
 }
 
+// sequentially increased message counter
+var messageId uint64
+
 func (b *Bot) sendReply(m Message) {
-	m.Id = atomic.AddUint64(&counter, 1)
+	m.Id = atomic.AddUint64(&messageId, 1)
 	if err := websocket.JSON.Send(b.ws, m); err != nil {
 		log.Println("send reply failed with", err)
 	}
 }
-
-var counter uint64
