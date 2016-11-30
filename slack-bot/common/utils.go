@@ -20,6 +20,7 @@ func EndOfDate(d time.Time) time.Time {
 	return t.Add(time.Duration(-1*t.Hour()) * time.Hour).Add(oneDay)
 }
 
+// GetRedisPool returns connection pool for redis
 func GetRedisPool(network, address, password string) (pool *redis.Pool) {
 	pool = &redis.Pool{
 		MaxIdle:     3,

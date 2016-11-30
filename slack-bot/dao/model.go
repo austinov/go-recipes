@@ -1,8 +1,9 @@
 package dao
 
 type Band struct {
-	Id   string
-	Name string
+	Id     string
+	Name   string
+	Events []Event
 }
 
 type Event struct {

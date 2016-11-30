@@ -1,8 +1,22 @@
+# Configuration of bot
 bot:
   token: xxx
+  # number of go-routines to process messages
+  num-handlers: 2 # default value is 1
+  # number of go-routines to send replies 
+  num-senders: 3 #default value is 1
 
+# Configuration of db storage
 db:
+  type: redis # redis, memory
   network: tcp # tcp/tcp4/tcp6/unix
   address: redis:6379
   username:
   password:
+
+# Configuration of loader data from http://concerts-metal.com
+cmetal:
+  base-url: http://en.concerts-metal.com/
+  # frequency run the loader
+  # it will run once if the value is empty 
+  frequency: 12h

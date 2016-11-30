@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/austinov/go-recipes/slack-bot/common"
+	"github.com/austinov/go-recipes/slack-bot/config"
 	"github.com/austinov/go-recipes/slack-bot/dao"
 
 	"golang.org/x/net/websocket"
@@ -23,7 +24,7 @@ const (
 )
 
 type Bot struct {
-	token    string
+	cfg      config.BotConfig
 	id       string
 	ws       *websocket.Conn
 	messages chan Message
@@ -31,19 +32,21 @@ type Bot struct {
 	dao      dao.Dao
 }
 
-func New(token string, dao dao.Dao) *Bot {
-	if token == "" {
-		log.Fatal("Token is empty")
+func New(cfg config.BotConfig, dao dao.Dao) *Bot {
+	if cfg.NumHandlers <= 0 {
+		cfg.NumHandlers = 1
+	}
+	if cfg.NumSenders <= 0 {
+		cfg.NumSenders = 1
 	}
 	return &Bot{
-		token: token,
-		dao:   dao,
+		cfg: cfg,
+		dao: dao,
 	}
 }
 
 func (b *Bot) Start() {
 	log.Println("Start bot.")
-	// TODO
 	if err := b.connect(); err != nil {
 		log.Fatal(err)
 	}
@@ -55,24 +58,19 @@ func (b *Bot) Start() {
 
 	wg.Add(1)
 	go b.pollMessages(&wg)
-	for i := 0; i < 1; /*numPollers*/ i++ {
+	for i := 0; i < b.cfg.NumHandlers; i++ {
 		wg.Add(1)
 		go b.processMessages(&wg)
 	}
-	for i := 0; i < 1; /*numSenders*/ i++ {
+	for i := 0; i < b.cfg.NumSenders; i++ {
 		wg.Add(1)
 		go b.processReplies(&wg)
 	}
 	wg.Wait()
 }
 
-func (b *Bot) Stop() {
-	// TODO
-	//b.ws.Close()
-}
-
 func (b *Bot) connect() error {
-	resp, err := http.Get(fmt.Sprintf(startRtmURL, b.token))
+	resp, err := http.Get(fmt.Sprintf(startRtmURL, b.cfg.Token))
 	if err != nil {
 		return err
 	}
