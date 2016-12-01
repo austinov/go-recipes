@@ -16,6 +16,8 @@ import (
 	"github.com/austinov/go-recipes/slack-bot/loader"
 )
 
+type worker func(in <-chan dao.Band, out chan<- dao.Band)
+
 type CMetalLoader struct {
 	cfg    config.CMetalConfig
 	bands  chan dao.Band
@@ -59,13 +61,15 @@ func (l *CMetalLoader) do() error {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	bands := l.startLoadBands(&wg)
+	bands := make(chan dao.Band, l.cfg.NumLoaders)
+	runWorkers(&wg, nil, bands, 1, l.loadBands)
 
 	wg.Add(1)
-	bandEvents := l.startLoadBandEvents(&wg, bands)
+	bandEvents := make(chan dao.Band, l.cfg.NumSavers)
+	runWorkers(&wg, bands, bandEvents, l.cfg.NumLoaders, l.loadBandEvents)
 
 	wg.Add(1)
-	l.startSaveBandEvents(&wg, bandEvents)
+	runWorkers(&wg, bandEvents, nil, l.cfg.NumSavers, l.saveBandEvents)
 
 	wg.Wait()
 
@@ -74,63 +78,58 @@ func (l *CMetalLoader) do() error {
 
 // loadBands loads bands without events and put them into channel
 // to load the events these bands.
-func (l *CMetalLoader) startLoadBands(wg *sync.WaitGroup) <-chan dao.Band {
-	bands := make(chan dao.Band, l.cfg.NumLoaders)
-	go func() {
-		defer wg.Done()
-		defer close(bands)
-		/*
-			r, err := os.Open("./en.concerts-metal.com_search.html")
-			if err != nil {
-				log.Fatal(err)
-			}
-			doc, err := goquery.NewDocumentFromReader(r)
-		*/
-
-		// Load the HTML document
-		doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php")
+func (l *CMetalLoader) loadBands(in <-chan dao.Band, out chan<- dao.Band) {
+	/*
+		r, err := os.Open("./en.concerts-metal.com_search.html")
 		if err != nil {
 			log.Fatal(err)
 		}
+		doc, err := goquery.NewDocumentFromReader(r)
+	*/
 
-		doc.Find("#groupe").Each(func(i int, s *goquery.Selection) {
-			// For each item found, get the band id and title
-			if band := s.Find("option"); band != nil {
-				band.Each(func(j int, ss *goquery.Selection) {
-					id, _ := ss.Attr("value")
-					name := ss.Text()
-					if id != "" && name != "" {
-						bands <- dao.Band{
-							Id:   id,
-							Name: name,
-						}
+	// Load the HTML document
+	doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	doc.Find("#groupe").Each(func(i int, s *goquery.Selection) {
+		// For each item found, get the band id and title
+		if band := s.Find("option"); band != nil {
+			band.Each(func(j int, ss *goquery.Selection) {
+				id, _ := ss.Attr("value")
+				name := ss.Text()
+				if id != "" && name != "" {
+					out <- dao.Band{
+						Id:   id,
+						Name: name,
 					}
-				})
-			}
-		})
-	}()
-	return bands
+				}
+			})
+		}
+	})
 }
 
-func (l *CMetalLoader) startLoadBandEvents(wg *sync.WaitGroup, bands <-chan dao.Band) <-chan dao.Band {
-	bandEvents := make(chan dao.Band, l.cfg.NumSavers)
-
+// TODO comments
+func runWorkers(wg *sync.WaitGroup, in <-chan dao.Band, out chan<- dao.Band, workers int, w worker) {
 	go func() {
-		defer wg.Done()
-		defer close(bandEvents)
+		defer func() {
+			if out != nil {
+				defer close(out)
+			}
+			wg.Done()
+		}()
 
 		var wg_ sync.WaitGroup
-		for i := 0; i < l.cfg.NumLoaders; i++ {
+		for i := 0; i < workers; i++ {
 			wg_.Add(1)
 			go func() {
 				defer wg_.Done()
-				l.loadBandEvents(bands, bandEvents)
+				w(in, out)
 			}()
 		}
 		wg_.Wait()
 	}()
-
-	return bandEvents
 }
 
 func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- dao.Band) {
@@ -176,22 +175,10 @@ func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- d
 	}
 }
 
-func (l *CMetalLoader) startSaveBandEvents(wg *sync.WaitGroup, bandEvents <-chan dao.Band) {
-	go func() {
-		defer wg.Done()
-
-		var wg_ sync.WaitGroup
-		for i := 0; i < l.cfg.NumSavers; i++ {
-			wg_.Add(1)
-			go func() {
-				defer wg_.Done()
-				for band := range bandEvents {
-					log.Printf("saveBandEvents: %#v\n", band.Name)
-				}
-			}()
-		}
-		wg_.Wait()
-	}()
+func (l *CMetalLoader) saveBandEvents(in <-chan dao.Band, out chan<- dao.Band) {
+	for bandEvents := range in {
+		log.Printf("saveBandEvents: %#v\n", bandEvents.Name)
+	}
 }
 
 func (l *CMetalLoader) getNextEvents(s *goquery.Selection) ([]dao.Event, error) {
