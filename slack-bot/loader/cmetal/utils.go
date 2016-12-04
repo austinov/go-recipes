@@ -1,0 +1,148 @@
+package cmetal
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/austinov/go-recipes/slack-bot/dao"
+)
+
+var re = regexp.MustCompile("\\d{1,2}/\\d{1,2}/\\d{4}")
+
+//type worker func(in <-chan dao.Band, out chan<- dao.Band)
+type worker func(in <-chan interface{}, out chan<- interface{})
+
+// runWorkers runs several workers passing them in/out channels.
+func runWorkers(wg *sync.WaitGroup,
+	//in <-chan dao.Band, out chan<- dao.Band,
+	in <-chan interface{}, out chan<- interface{},
+	numWorkers int, w worker) {
+	go func() {
+		defer func() {
+			if out != nil {
+				close(out)
+			}
+			wg.Done()
+		}()
+
+		var wg_ sync.WaitGroup
+		for i := 0; i < numWorkers; i++ {
+			wg_.Add(1)
+			go func() {
+				defer wg_.Done()
+				w(in, out)
+			}()
+		}
+		wg_.Wait()
+	}()
+}
+
+func doRequest(url string) error {
+	// TODO reuse client
+	transport := &http.Transport{}
+	client := &http.Client{
+		Transport: timeout(transport, 30*time.Second),
+	}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return nil
+}
+
+func timeout(transport *http.Transport, timeout time.Duration) *http.Transport {
+	transport.Dial = func(network, addr string) (net.Conn, error) {
+		conn, err := net.DialTimeout(network, addr, timeout)
+		if err != nil {
+			return nil, err
+		}
+		conn.SetDeadline(time.Now().Add(timeout))
+		return conn, nil
+	}
+	return transport
+}
+
+// parseDate parses date string from concerts-metal.com.
+// It returns begin and end Unix dates
+func parseDate(date string) (int64, int64, error) {
+	//t1 := "30/05/2012"
+	if t, err := time.Parse("02/01/2006", date); err == nil {
+		from := t.Unix()
+		return from, from, nil
+	}
+
+	//t2 := "Tuesday 29 November 2016"
+	if t, err := time.Parse("Monday 2 January 2006", date); err == nil {
+		from := t.Unix()
+		return from, from, nil
+	}
+
+	//t3 := "From 31 March to 11 April 2017"
+	prefix := "From "
+	if strings.HasPrefix(date, prefix) {
+		parts := strings.Split(date, " to ")
+		var to time.Time
+		if len(parts) > 1 {
+			var err error
+			to, err = time.Parse("2 January 2006", strings.TrimSpace(parts[1]))
+			if err != nil {
+				return 0, 0, err
+			}
+		}
+		partFrom := strings.TrimSpace(parts[0][len(prefix):])
+		from, err := time.Parse("2 January 2006", partFrom)
+		if err != nil {
+			partFrom += fmt.Sprintf(" %d", to.Year())
+			from, err = time.Parse("2 January 2006", partFrom)
+		}
+		return from.Unix(), to.Unix(), nil
+	}
+	return 0, 0, errors.New("cannot parse [" + date + "]")
+}
+
+// parseLastEvents parses html with events from concerts-metal.com.
+// It returns array of events.
+func parseLastEvents(text string) ([]dao.Event, error) {
+	idxs := re.FindAllStringIndex(text, -1)
+	l := len(idxs)
+	result := make([]dao.Event, l)
+	for i := 0; i < l; i++ {
+		idx := idxs[i]
+		date := strings.TrimSpace(text[idx[0]:idx[1]])
+		tail := ""
+		if i < l-1 {
+			tail = text[idx[1]:idxs[i+1][0]]
+		} else {
+			tail = text[idx[1]:]
+		}
+		details := strings.Split(tail, ",")
+		city := strings.TrimSpace(details[0])
+		venue := ""
+		if len(details) > 1 {
+			venue = strings.TrimSpace(details[1])
+		}
+		if from, to, err := parseDate(date); err != nil {
+			return nil, err
+		} else {
+			result[i] = dao.Event{
+				From:  from,
+				To:    to,
+				City:  city,
+				Venue: venue,
+			}
+		}
+	}
+	return result, nil
+}

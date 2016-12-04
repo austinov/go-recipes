@@ -10,4 +10,11 @@ type Dao interface {
 	// between two Unix time in seconds.
 	// It returns empty array if no events.
 	GetCalendar(band string, from, to int64) ([]Event, error)
+
+	/*
+		AddEvents(events []Event) error
+		GetCityEvents(city string, from, to int64) ([]Event, error)
+		GetBandEvents(band string, from, to int64) ([]Event, error)
+		GetBandInCityEvents(band string, city string, from, to int64) ([]Event, error)
+	*/
 }

@@ -1,12 +1,7 @@
 package dao
 
-type Band struct {
-	Id     string
-	Name   string
-	Events []Event
-}
-
 type Event struct {
+	Band  string
 	Title string
 	From  int64
 	To    int64

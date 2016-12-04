@@ -1,13 +1,11 @@
 package cmetal
 
 import (
-	"errors"
 	"fmt"
 	"log"
-	_ "os"
-	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -16,19 +14,46 @@ import (
 	"github.com/austinov/go-recipes/slack-bot/loader"
 )
 
-type worker func(in <-chan dao.Band, out chan<- dao.Band)
+type cmetalBand struct {
+	Id   string
+	Name string
+}
 
 type CMetalLoader struct {
-	cfg    config.CMetalConfig
-	bands  chan dao.Band
-	events chan dao.Band
-	done   chan struct{}
+	cfg     config.CMetalConfig
+	bands   chan cmetalBand
+	events  chan dao.Event
+	done    chan struct{}
+	breaker *Breaker
 }
 
 func New(cfg config.CMetalConfig) loader.Loader {
+	breakTriggers := make([]Trigger, 3)
+	breakTriggers[0] = Trigger{
+		ErrorKind:  "HTTP",
+		ErrorLimit: 10,
+		Callback: func(kind string, err error) {
+			log.Printf("Breaker triggered for %s: %#v\n", kind, err)
+		},
+	}
+	breakTriggers[1] = Trigger{
+		ErrorKind:  "APP",
+		ErrorLimit: 1,
+		Callback: func(kind string, err error) {
+			log.Fatalf("Breaker triggered for %s: %#v\n", kind, err)
+		},
+	}
+	breakTriggers[2] = Trigger{
+		ErrorKind:  "PARSE",
+		ErrorLimit: 1,
+		Callback: func(kind string, err error) {
+			log.Fatalf("Breaker triggered for %s: %#v\n", kind, err)
+		},
+	}
 	return &CMetalLoader{
-		cfg:  cfg,
-		done: make(chan struct{}),
+		cfg:     cfg,
+		done:    make(chan struct{}),
+		breaker: NewBreaker(breakTriggers),
 	}
 }
 
@@ -61,11 +86,11 @@ func (l *CMetalLoader) do() error {
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	bands := make(chan dao.Band, l.cfg.NumLoaders)
+	bands := make(chan interface{}, l.cfg.NumLoaders)
 	runWorkers(&wg, nil, bands, 1, l.loadBands)
 
 	wg.Add(1)
-	bandEvents := make(chan dao.Band, l.cfg.NumSavers)
+	bandEvents := make(chan interface{}, l.cfg.NumSavers)
 	runWorkers(&wg, bands, bandEvents, l.cfg.NumLoaders, l.loadBandEvents)
 
 	wg.Add(1)
@@ -76,9 +101,9 @@ func (l *CMetalLoader) do() error {
 	return nil
 }
 
-// loadBands loads bands without events and put them into channel
+// loadBands loads bands without events and put them into outBands channel
 // to load the events these bands.
-func (l *CMetalLoader) loadBands(in <-chan dao.Band, out chan<- dao.Band) {
+func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- interface{}) {
 	/*
 		r, err := os.Open("./en.concerts-metal.com_search.html")
 		if err != nil {
@@ -90,8 +115,10 @@ func (l *CMetalLoader) loadBands(in <-chan dao.Band, out chan<- dao.Band) {
 	// Load the HTML document
 	doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php")
 	if err != nil {
-		log.Fatal(err)
+		l.breaker.Process("HTTP", err)
+		return
 	}
+	l.breaker.Process("HTTP", nil)
 
 	doc.Find("#groupe").Each(func(i int, s *goquery.Selection) {
 		// For each item found, get the band id and title
@@ -100,7 +127,7 @@ func (l *CMetalLoader) loadBands(in <-chan dao.Band, out chan<- dao.Band) {
 				id, _ := ss.Attr("value")
 				name := ss.Text()
 				if id != "" && name != "" {
-					out <- dao.Band{
+					outBands <- cmetalBand{
 						Id:   id,
 						Name: name,
 					}
@@ -110,34 +137,21 @@ func (l *CMetalLoader) loadBands(in <-chan dao.Band, out chan<- dao.Band) {
 	})
 }
 
-// TODO comments
-func runWorkers(wg *sync.WaitGroup, in <-chan dao.Band, out chan<- dao.Band, workers int, w worker) {
-	go func() {
-		defer func() {
-			if out != nil {
-				defer close(out)
-			}
-			wg.Done()
-		}()
-
-		var wg_ sync.WaitGroup
-		for i := 0; i < workers; i++ {
-			wg_.Add(1)
-			go func() {
-				defer wg_.Done()
-				w(in, out)
-			}()
+// loadBandEvents loads events for band from inBands channel and
+// put them into outEvents channel to save into DB.
+func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan<- interface{}) {
+	for e := range inBands {
+		band, ok := e.(cmetalBand)
+		if !ok {
+			l.breaker.Process("APP", fmt.Errorf("Illegal type of argument, expected dao.Band"))
+			continue
 		}
-		wg_.Wait()
-	}()
-}
-
-func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- dao.Band) {
-	for band := range bands {
 		doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php?g=" + band.Id)
 		if err != nil {
-			log.Fatal(err)
+			l.breaker.Process("HTTP", err)
+			continue
 		}
+		l.breaker.Process("HTTP", nil)
 
 		events := make([]dao.Event, 0)
 
@@ -146,8 +160,8 @@ func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- d
 			if td := s.Find("td"); td != nil {
 				td.Each(func(j int, s1 *goquery.Selection) {
 					if strings.HasPrefix(s1.Text(), "Next events (") {
-						if nextEvents, err := l.getNextEvents(s1); err != nil {
-							log.Printf("parse next events failed with %#v\n", err)
+						if nextEvents, err := l.getNextEvents(band, s1); err != nil {
+							l.breaker.Process("PARSE", err)
 						} else {
 							events = append(events, nextEvents...)
 						}
@@ -161,8 +175,8 @@ func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- d
 			if td := s.Find("td"); td != nil {
 				td.Each(func(j int, s1 *goquery.Selection) {
 					if strings.Contains(s1.Text(), "Last events (") {
-						if lastEvents, err := l.getLastEvents(s1); err != nil {
-							log.Printf("parse last events failed with %#v\n", err)
+						if lastEvents, err := l.getLastEvents(band, s1); err != nil {
+							l.breaker.Process("PARSE", err)
 						} else {
 							events = append(events, lastEvents...)
 						}
@@ -170,18 +184,26 @@ func (l *CMetalLoader) loadBandEvents(bands <-chan dao.Band, bandEvents chan<- d
 				})
 			}
 		})
-		band.Events = events
-		bandEvents <- band
+		outEvents <- events
 	}
 }
 
-func (l *CMetalLoader) saveBandEvents(in <-chan dao.Band, out chan<- dao.Band) {
-	for bandEvents := range in {
-		log.Printf("saveBandEvents: %#v\n", bandEvents.Name)
+// saveBandEvents saves band's events from inEvents channel into DB.
+func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- interface{}) {
+	for e := range inEvents {
+		events, ok := e.([]dao.Event)
+		if !ok {
+			l.breaker.Process("APP", fmt.Errorf("Illegal type of argument, expected []dao.Event"))
+			continue
+		}
+		if len(events) > 0 {
+			log.Printf("saveBandEvents: %#v\n", events[0].Band)
+		}
 	}
 }
 
-func (l *CMetalLoader) getNextEvents(s *goquery.Selection) ([]dao.Event, error) {
+// getNextEvents returns array of events which will be in the future from html nodes.
+func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]dao.Event, error) {
 	clearDetail := func(s string) string {
 		if idx := strings.Index(s, " <img"); idx != -1 {
 			return s[:idx]
@@ -204,9 +226,10 @@ func (l *CMetalLoader) getNextEvents(s *goquery.Selection) ([]dao.Event, error) 
 							eventImg, _ = linkImg.Attr("src")
 						}
 						if from, to, err := parseDate(eventDate); err != nil {
-							fmt.Printf("%#v\n", err)
+							l.breaker.Process("PARSE", err)
 						} else {
 							events = append(events, dao.Event{
+								Band:  band.Name,
 								Title: eventTitle,
 								From:  from,
 								To:    to,
@@ -224,14 +247,18 @@ func (l *CMetalLoader) getNextEvents(s *goquery.Selection) ([]dao.Event, error) 
 	return nil, nil
 }
 
-func (l *CMetalLoader) getLastEvents(s *goquery.Selection) ([]dao.Event, error) {
+// getLastEvents returns array of events whichi have been already from html nodes.
+func (l *CMetalLoader) getLastEvents(band cmetalBand, s *goquery.Selection) ([]dao.Event, error) {
 	if noTable := s.Not("table"); noTable != nil {
 		children := noTable.Clone().Children().Remove().End()
 		ret, err := children.Html()
 		if err != nil {
 			return nil, err
 		}
-		events := parseLastEvents(ret)
+		events, err := parseLastEvents(ret)
+		if err != nil {
+			return nil, err
+		}
 
 		k := len(events) - 1
 		if k >= 0 {
@@ -247,6 +274,7 @@ func (l *CMetalLoader) getLastEvents(s *goquery.Selection) ([]dao.Event, error) 
 
 			for i, j := k, len(tmpEvents)-1; i >= 0 && j >= 0; i, j = i-1, j-1 {
 				event := tmpEvents[j]
+				events[i].Band = band.Name
 				events[i].Title = event.Title
 				events[i].Link = event.Link
 			}
@@ -256,6 +284,7 @@ func (l *CMetalLoader) getLastEvents(s *goquery.Selection) ([]dao.Event, error) 
 	return nil, nil
 }
 
+// buildURL builds URL based on URL from config and href.
 func (l *CMetalLoader) buildURL(href string) string {
 	if href != "" {
 		return l.cfg.BaseURL + href
@@ -263,74 +292,54 @@ func (l *CMetalLoader) buildURL(href string) string {
 	return href
 }
 
-// TODO test
-func parseDate(date string) (int64, int64, error) {
-	//t1 := "30/05/2012"
-	if t, err := time.Parse("02/01/2006", date); err == nil {
-		from := t.Unix()
-		return from, from, nil
-	}
-
-	//t2 := "Tuesday 29 November 2016"
-	if t, err := time.Parse("Monday 2 January 2006", date); err == nil {
-		from := t.Unix()
-		return from, from, nil
-	}
-
-	//t3 := "From 31 March to 11 April 2017"
-	prefix := "From "
-	if strings.HasPrefix(date, prefix) {
-		parts := strings.Split(date, " to ")
-		var to time.Time
-		if len(parts) > 1 {
-			var err error
-			to, err = time.Parse("2 January 2006", strings.TrimSpace(parts[1]))
-			if err != nil {
-				return 0, 0, err
-			}
-		}
-		partFrom := strings.TrimSpace(parts[0][len(prefix):])
-		from, err := time.Parse("2 January 2006", partFrom)
-		if err != nil {
-			partFrom += fmt.Sprintf(" %d", to.Year())
-			from, err = time.Parse("2 January 2006", partFrom)
-		}
-		return from.Unix(), to.Unix(), nil
-	}
-	return 0, 0, errors.New("cannot parse [" + date + "]")
+type Trigger struct {
+	ErrorKind  string
+	ErrorLimit int32
+	Callback   func(kind string, err error)
 }
 
-// TODO test
-func parseLastEvents(text string) []dao.Event {
-	re := regexp.MustCompile("\\d{1,2}/\\d{1,2}/\\d{4}")
-	idxs := re.FindAllStringIndex(text, -1)
-	l := len(idxs)
-	result := make([]dao.Event, l)
-	for i := 0; i < l; i++ {
-		idx := idxs[i]
-		date := strings.TrimSpace(text[idx[0]:idx[1]])
-		tail := ""
-		if i < l-1 {
-			tail = text[idx[1]:idxs[i+1][0]]
-		} else {
-			tail = text[idx[1]:]
-		}
-		details := strings.Split(tail, ",")
-		city := strings.TrimSpace(details[0])
-		venue := ""
-		if len(details) > 1 {
-			venue = strings.TrimSpace(details[1])
-		}
-		if from, to, err := parseDate(date); err != nil {
-			fmt.Printf("%#v\n", err)
-		} else {
-			result[i] = dao.Event{
-				From:  from,
-				To:    to,
-				City:  city,
-				Venue: venue,
-			}
+type state struct {
+	Trigger
+	errors int32
+}
+
+type Breaker struct {
+	states map[string]state // key is kind of error
+}
+
+func NewBreaker(t []Trigger) *Breaker {
+	states := make(map[string]state)
+	for _, a := range t {
+		states[a.ErrorKind] = state{
+			Trigger: a,
 		}
 	}
-	return result
+	return &Breaker{
+		states: states,
+	}
+}
+
+func (b *Breaker) Process(kind string, err error) {
+	state, ok := b.states[kind]
+	if !ok {
+		log.Printf("Breaker warning: unknown kind of error (%s)\n", kind)
+		return
+	}
+	if err == nil {
+		atomic.StoreInt32(&state.errors, 0)
+	} else {
+		errors := atomic.AddInt32(&state.errors, 1)
+		if errors >= state.ErrorLimit {
+			state.Callback(kind, err)
+		}
+	}
+}
+
+func (b *Breaker) Fire(kind string, err error) {
+	state, ok := b.states[kind]
+	if !ok {
+		log.Printf("Breaker warning: unknown kind of error (%s)\n", kind)
+		return
+	}
+	state.Callback(kind, err)
 }
