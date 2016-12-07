@@ -5,10 +5,10 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/austinov/go-recipes/slack-bot/common"
 	"github.com/austinov/go-recipes/slack-bot/config"
 	"github.com/austinov/go-recipes/slack-bot/dao"
 	"github.com/austinov/go-recipes/slack-bot/loader"
@@ -20,41 +20,35 @@ type cmetalBand struct {
 }
 
 type CMetalLoader struct {
-	cfg     config.CMetalConfig
-	bands   chan cmetalBand
-	events  chan dao.Event
-	done    chan struct{}
-	breaker *Breaker
+	cfg        config.CMetalConfig
+	bands      chan cmetalBand
+	events     chan dao.Event
+	done       chan struct{}
+	httpclient *common.HTTPClient
+	fuse       *common.Fuse
 }
 
 func New(cfg config.CMetalConfig) loader.Loader {
-	breakTriggers := make([]Trigger, 3)
-	breakTriggers[0] = Trigger{
-		ErrorKind:  "HTTP",
-		ErrorLimit: 10,
-		Callback: func(kind string, err error) {
-			log.Printf("Breaker triggered for %s: %#v\n", kind, err)
-		},
+	loader := &CMetalLoader{
+		cfg:        cfg,
+		done:       make(chan struct{}),
+		httpclient: common.NewHTTPClient(30 * time.Second),
 	}
-	breakTriggers[1] = Trigger{
-		ErrorKind:  "APP",
-		ErrorLimit: 1,
-		Callback: func(kind string, err error) {
-			log.Fatalf("Breaker triggered for %s: %#v\n", kind, err)
-		},
-	}
-	breakTriggers[2] = Trigger{
-		ErrorKind:  "PARSE",
-		ErrorLimit: 1,
-		Callback: func(kind string, err error) {
-			log.Fatalf("Breaker triggered for %s: %#v\n", kind, err)
-		},
-	}
-	return &CMetalLoader{
-		cfg:     cfg,
-		done:    make(chan struct{}),
-		breaker: NewBreaker(breakTriggers),
-	}
+	fuseTriggers := make([]common.FuseTrigger, 0)
+	fuseTriggers = append(fuseTriggers,
+		common.NewFuseTrigger("APP", 1, func(kind string, err error) {
+			log.Fatalln("Fuse triggered for %s: %#v\n", kind, err)
+		}))
+	fuseTriggers = append(fuseTriggers,
+		common.NewFuseTrigger("HTTP", 10, func(kind string, err error) {
+			log.Fatalf("Fuse triggered for %s: %#v\n", kind, err)
+		}))
+	fuseTriggers = append(fuseTriggers,
+		common.NewFuseTrigger("PARSE", 1, func(kind string, err error) {
+			log.Fatalln("Fuse triggered for %s: %#v\n", kind, err)
+		}))
+	loader.fuse = common.NewFuse(fuseTriggers)
+	return loader
 }
 
 func (l *CMetalLoader) Start() error {
@@ -79,6 +73,7 @@ func (l *CMetalLoader) Start() error {
 }
 
 func (l *CMetalLoader) Stop() {
+	log.Println("Loader stopping")
 	close(l.done)
 }
 
@@ -87,14 +82,14 @@ func (l *CMetalLoader) do() error {
 
 	wg.Add(1)
 	bands := make(chan interface{}, l.cfg.NumLoaders)
-	runWorkers(&wg, nil, bands, 1, l.loadBands)
+	common.RunWorkers(&wg, nil, bands, 1, l.loadBands)
 
 	wg.Add(1)
 	bandEvents := make(chan interface{}, l.cfg.NumSavers)
-	runWorkers(&wg, bands, bandEvents, l.cfg.NumLoaders, l.loadBandEvents)
+	common.RunWorkers(&wg, bands, bandEvents, l.cfg.NumLoaders, l.loadBandEvents)
 
 	wg.Add(1)
-	runWorkers(&wg, bandEvents, nil, l.cfg.NumSavers, l.saveBandEvents)
+	common.RunWorkers(&wg, bandEvents, nil, l.cfg.NumSavers, l.saveBandEvents)
 
 	wg.Wait()
 
@@ -113,12 +108,18 @@ func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- inte
 	*/
 
 	// Load the HTML document
-	doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php")
+	resp, err := l.httpclient.Get(l.cfg.BaseURL + "search.php")
 	if err != nil {
-		l.breaker.Process("HTTP", err)
+		l.fuse.Process("HTTP", err)
 		return
 	}
-	l.breaker.Process("HTTP", nil)
+
+	doc, err := goquery.NewDocumentFromResponse(resp)
+	if err != nil {
+		l.fuse.Process("HTTP", err)
+		return
+	}
+	l.fuse.Process("HTTP", nil)
 
 	doc.Find("#groupe").Each(func(i int, s *goquery.Selection) {
 		// For each item found, get the band id and title
@@ -127,9 +128,14 @@ func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- inte
 				id, _ := ss.Attr("value")
 				name := ss.Text()
 				if id != "" && name != "" {
-					outBands <- cmetalBand{
-						Id:   id,
-						Name: name,
+					select {
+					case <-l.done:
+						return
+					default:
+						outBands <- cmetalBand{
+							Id:   id,
+							Name: name,
+						}
 					}
 				}
 			})
@@ -143,15 +149,20 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 	for e := range inBands {
 		band, ok := e.(cmetalBand)
 		if !ok {
-			l.breaker.Process("APP", fmt.Errorf("Illegal type of argument, expected dao.Band"))
+			l.fuse.Process("APP", fmt.Errorf("Illegal type of argument, expected dao.Band"))
 			continue
 		}
-		doc, err := goquery.NewDocument(l.cfg.BaseURL + "search.php?g=" + band.Id)
+		resp, err := l.httpclient.Get(l.cfg.BaseURL + "search.php?g=" + band.Id)
 		if err != nil {
-			l.breaker.Process("HTTP", err)
+			l.fuse.Process("HTTP", err)
 			continue
 		}
-		l.breaker.Process("HTTP", nil)
+		doc, err := goquery.NewDocumentFromResponse(resp)
+		if err != nil {
+			l.fuse.Process("HTTP", err)
+			continue
+		}
+		l.fuse.Process("HTTP", nil)
 
 		events := make([]dao.Event, 0)
 
@@ -161,9 +172,10 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 				td.Each(func(j int, s1 *goquery.Selection) {
 					if strings.HasPrefix(s1.Text(), "Next events (") {
 						if nextEvents, err := l.getNextEvents(band, s1); err != nil {
-							l.breaker.Process("PARSE", err)
+							l.fuse.Process("PARSE", err)
 						} else {
 							events = append(events, nextEvents...)
+							l.fuse.Process("PARSE", nil)
 						}
 					}
 				})
@@ -176,9 +188,10 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 				td.Each(func(j int, s1 *goquery.Selection) {
 					if strings.Contains(s1.Text(), "Last events (") {
 						if lastEvents, err := l.getLastEvents(band, s1); err != nil {
-							l.breaker.Process("PARSE", err)
+							l.fuse.Process("PARSE", err)
 						} else {
 							events = append(events, lastEvents...)
+							l.fuse.Process("PARSE", nil)
 						}
 					}
 				})
@@ -193,7 +206,7 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 	for e := range inEvents {
 		events, ok := e.([]dao.Event)
 		if !ok {
-			l.breaker.Process("APP", fmt.Errorf("Illegal type of argument, expected []dao.Event"))
+			l.fuse.Process("APP", fmt.Errorf("Illegal type of argument, expected []dao.Event"))
 			continue
 		}
 		if len(events) > 0 {
@@ -226,7 +239,7 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]d
 							eventImg, _ = linkImg.Attr("src")
 						}
 						if from, to, err := parseDate(eventDate); err != nil {
-							l.breaker.Process("PARSE", err)
+							l.fuse.Process("PARSE", err)
 						} else {
 							events = append(events, dao.Event{
 								Band:  band.Name,
@@ -237,6 +250,7 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]d
 								Link:  l.buildURL(eventHref),
 								Img:   l.buildURL(eventImg),
 							})
+							l.fuse.Process("PARSE", nil)
 						}
 					}
 				}
@@ -290,56 +304,4 @@ func (l *CMetalLoader) buildURL(href string) string {
 		return l.cfg.BaseURL + href
 	}
 	return href
-}
-
-type Trigger struct {
-	ErrorKind  string
-	ErrorLimit int32
-	Callback   func(kind string, err error)
-}
-
-type state struct {
-	Trigger
-	errors int32
-}
-
-type Breaker struct {
-	states map[string]state // key is kind of error
-}
-
-func NewBreaker(t []Trigger) *Breaker {
-	states := make(map[string]state)
-	for _, a := range t {
-		states[a.ErrorKind] = state{
-			Trigger: a,
-		}
-	}
-	return &Breaker{
-		states: states,
-	}
-}
-
-func (b *Breaker) Process(kind string, err error) {
-	state, ok := b.states[kind]
-	if !ok {
-		log.Printf("Breaker warning: unknown kind of error (%s)\n", kind)
-		return
-	}
-	if err == nil {
-		atomic.StoreInt32(&state.errors, 0)
-	} else {
-		errors := atomic.AddInt32(&state.errors, 1)
-		if errors >= state.ErrorLimit {
-			state.Callback(kind, err)
-		}
-	}
-}
-
-func (b *Breaker) Fire(kind string, err error) {
-	state, ok := b.states[kind]
-	if !ok {
-		log.Printf("Breaker warning: unknown kind of error (%s)\n", kind)
-		return
-	}
-	state.Callback(kind, err)
 }

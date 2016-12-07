@@ -3,76 +3,14 @@ package cmetal
 import (
 	"errors"
 	"fmt"
-	"net"
-	"net/http"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/austinov/go-recipes/slack-bot/dao"
 )
 
 var re = regexp.MustCompile("\\d{1,2}/\\d{1,2}/\\d{4}")
-
-//type worker func(in <-chan dao.Band, out chan<- dao.Band)
-type worker func(in <-chan interface{}, out chan<- interface{})
-
-// runWorkers runs several workers passing them in/out channels.
-func runWorkers(wg *sync.WaitGroup,
-	//in <-chan dao.Band, out chan<- dao.Band,
-	in <-chan interface{}, out chan<- interface{},
-	numWorkers int, w worker) {
-	go func() {
-		defer func() {
-			if out != nil {
-				close(out)
-			}
-			wg.Done()
-		}()
-
-		var wg_ sync.WaitGroup
-		for i := 0; i < numWorkers; i++ {
-			wg_.Add(1)
-			go func() {
-				defer wg_.Done()
-				w(in, out)
-			}()
-		}
-		wg_.Wait()
-	}()
-}
-
-func doRequest(url string) error {
-	// TODO reuse client
-	transport := &http.Transport{}
-	client := &http.Client{
-		Transport: timeout(transport, 30*time.Second),
-	}
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	return nil
-}
-
-func timeout(transport *http.Transport, timeout time.Duration) *http.Transport {
-	transport.Dial = func(network, addr string) (net.Conn, error) {
-		conn, err := net.DialTimeout(network, addr, timeout)
-		if err != nil {
-			return nil, err
-		}
-		conn.SetDeadline(time.Now().Add(timeout))
-		return conn, nil
-	}
-	return transport
-}
 
 // parseDate parses date string from concerts-metal.com.
 // It returns begin and end Unix dates
