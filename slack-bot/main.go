@@ -5,10 +5,10 @@ import (
 
 	"github.com/austinov/go-recipes/slack-bot/bot"
 	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/dao"
-	"github.com/austinov/go-recipes/slack-bot/dao/memory"
-	"github.com/austinov/go-recipes/slack-bot/dao/redigo"
 	"github.com/austinov/go-recipes/slack-bot/loader/cmetal"
+	"github.com/austinov/go-recipes/slack-bot/store"
+	"github.com/austinov/go-recipes/slack-bot/store/memory"
+	"github.com/austinov/go-recipes/slack-bot/store/redigo"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	dao := createDao(cfg.DB)
 	defer dao.Close()
 
-	l := cmetal.New(cfg.CMetal)
+	l := cmetal.New(cfg.CMetal, dao)
 	// start loader in separate go-routine
 	go l.Start()
 
@@ -31,7 +31,7 @@ func main() {
 	l.Stop()
 }
 
-func createDao(cfg config.DBConfig) dao.Dao {
+func createDao(cfg config.DBConfig) store.Dao {
 	switch cfg.Type {
 	case "redis":
 		return redigo.New(cfg)

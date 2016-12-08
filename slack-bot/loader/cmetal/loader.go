@@ -10,8 +10,8 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"github.com/austinov/go-recipes/slack-bot/common"
 	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/dao"
 	"github.com/austinov/go-recipes/slack-bot/loader"
+	"github.com/austinov/go-recipes/slack-bot/store"
 )
 
 type cmetalBand struct {
@@ -21,16 +21,18 @@ type cmetalBand struct {
 
 type CMetalLoader struct {
 	cfg        config.CMetalConfig
-	bands      chan cmetalBand
-	events     chan dao.Event
-	done       chan struct{}
+	dao        store.Dao
 	httpclient *common.HTTPClient
 	fuse       *common.Fuse
+	bands      chan cmetalBand
+	events     chan store.Event
+	done       chan struct{}
 }
 
-func New(cfg config.CMetalConfig) loader.Loader {
+func New(cfg config.CMetalConfig, dao store.Dao) loader.Loader {
 	loader := &CMetalLoader{
 		cfg:        cfg,
+		dao:        dao,
 		done:       make(chan struct{}),
 		httpclient: common.NewHTTPClient(30 * time.Second),
 	}
@@ -164,7 +166,7 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 		}
 		l.fuse.Process("HTTP", nil)
 
-		events := make([]dao.Event, 0)
+		events := make([]store.Event, 0)
 
 		/* Next events */
 		doc.Find("table tbody").Each(func(i int, s *goquery.Selection) {
@@ -204,7 +206,7 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 // saveBandEvents saves band's events from inEvents channel into DB.
 func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- interface{}) {
 	for e := range inEvents {
-		events, ok := e.([]dao.Event)
+		events, ok := e.([]store.Event)
 		if !ok {
 			l.fuse.Process("APP", fmt.Errorf("Illegal type of argument, expected []dao.Event"))
 			continue
@@ -216,7 +218,7 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 }
 
 // getNextEvents returns array of events which will be in the future from html nodes.
-func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]dao.Event, error) {
+func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]store.Event, error) {
 	clearDetail := func(s string) string {
 		if idx := strings.Index(s, " <img"); idx != -1 {
 			return s[:idx]
@@ -224,7 +226,7 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]d
 		return s
 	}
 	if tdt := s.Find("table tbody td"); tdt != nil {
-		events := make([]dao.Event, 0)
+		events := make([]store.Event, 0)
 		tdt.Each(func(k int, s3 *goquery.Selection) {
 			if tdHtml, err := s3.Html(); err == nil {
 				eventDetail := strings.SplitN(tdHtml, "<br/>", 3)
@@ -241,7 +243,7 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]d
 						if from, to, err := parseDate(eventDate); err != nil {
 							l.fuse.Process("PARSE", err)
 						} else {
-							events = append(events, dao.Event{
+							events = append(events, store.Event{
 								Band:  band.Name,
 								Title: eventTitle,
 								From:  from,
@@ -262,7 +264,7 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]d
 }
 
 // getLastEvents returns array of events whichi have been already from html nodes.
-func (l *CMetalLoader) getLastEvents(band cmetalBand, s *goquery.Selection) ([]dao.Event, error) {
+func (l *CMetalLoader) getLastEvents(band cmetalBand, s *goquery.Selection) ([]store.Event, error) {
 	if noTable := s.Not("table"); noTable != nil {
 		children := noTable.Clone().Children().Remove().End()
 		ret, err := children.Html()
@@ -276,11 +278,11 @@ func (l *CMetalLoader) getLastEvents(band cmetalBand, s *goquery.Selection) ([]d
 
 		k := len(events) - 1
 		if k >= 0 {
-			tmpEvents := make([]dao.Event, 0)
+			tmpEvents := make([]store.Event, 0)
 			noTable.Find("a").Each(func(n int, s_ *goquery.Selection) {
 				eventTitle, _ := s_.Attr("title")
 				eventHref, _ := s_.Attr("href")
-				tmpEvents = append(tmpEvents, dao.Event{
+				tmpEvents = append(tmpEvents, store.Event{
 					Title: strings.TrimSpace(eventTitle),
 					Link:  l.buildURL(eventHref),
 				})

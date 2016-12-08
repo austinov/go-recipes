@@ -1,4 +1,4 @@
-package dao
+package store
 
 type Event struct {
 	Band  string

@@ -13,7 +13,7 @@ import (
 
 	"github.com/austinov/go-recipes/slack-bot/common"
 	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/dao"
+	"github.com/austinov/go-recipes/slack-bot/store"
 
 	"golang.org/x/net/websocket"
 )
@@ -25,14 +25,14 @@ const (
 
 type Bot struct {
 	cfg      config.BotConfig
-	id       string
+	dao      store.Dao
 	ws       *websocket.Conn
+	id       string
 	messages chan Message
 	replies  chan Message
-	dao      dao.Dao
 }
 
-func New(cfg config.BotConfig, dao dao.Dao) *Bot {
+func New(cfg config.BotConfig, dao store.Dao) *Bot {
 	if cfg.NumHandlers <= 0 {
 		cfg.NumHandlers = 1
 	}

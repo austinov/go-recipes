@@ -5,7 +5,7 @@ import (
 
 	"github.com/austinov/go-recipes/slack-bot/common"
 	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/dao"
+	"github.com/austinov/go-recipes/slack-bot/store"
 	"github.com/garyburd/redigo/redis"
 )
 
@@ -13,7 +13,7 @@ type Dao struct {
 	pool *redis.Pool
 }
 
-func New(cfg config.DBConfig) dao.Dao {
+func New(cfg config.DBConfig) store.Dao {
 	pool := common.GetRedisPool(cfg.Network, cfg.Address, cfg.Password)
 	return &Dao{
 		pool,
@@ -26,7 +26,7 @@ func (d *Dao) Close() error {
 	return nil
 }
 
-func (d *Dao) GetCalendar(band string, from, to int64) ([]dao.Event, error) {
+func (d *Dao) GetCalendar(band string, from, to int64) ([]store.Event, error) {
 	// TODO
 	return nil, nil
 }

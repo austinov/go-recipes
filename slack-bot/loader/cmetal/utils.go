@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/austinov/go-recipes/slack-bot/dao"
+	"github.com/austinov/go-recipes/slack-bot/store"
 )
 
 var re = regexp.MustCompile("\\d{1,2}/\\d{1,2}/\\d{4}")
@@ -52,10 +52,10 @@ func parseDate(date string) (int64, int64, error) {
 
 // parseLastEvents parses html with events from concerts-metal.com.
 // It returns array of events.
-func parseLastEvents(text string) ([]dao.Event, error) {
+func parseLastEvents(text string) ([]store.Event, error) {
 	idxs := re.FindAllStringIndex(text, -1)
 	l := len(idxs)
-	result := make([]dao.Event, l)
+	result := make([]store.Event, l)
 	for i := 0; i < l; i++ {
 		idx := idxs[i]
 		date := strings.TrimSpace(text[idx[0]:idx[1]])
@@ -74,7 +74,7 @@ func parseLastEvents(text string) ([]dao.Event, error) {
 		if from, to, err := parseDate(date); err != nil {
 			return nil, err
 		} else {
-			result[i] = dao.Event{
+			result[i] = store.Event{
 				From:  from,
 				To:    to,
 				City:  city,
