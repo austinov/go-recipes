@@ -134,9 +134,11 @@ func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- inte
 					case <-l.done:
 						return
 					default:
-						outBands <- cmetalBand{
-							Id:   id,
-							Name: name,
+						if name != "band" { // reserved word
+							outBands <- cmetalBand{
+								Id:   id,
+								Name: name,
+							}
 						}
 					}
 				}
@@ -213,6 +215,9 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 		}
 		if len(events) > 0 {
 			log.Printf("saveBandEvents: %#v\n", events[0].Band)
+			if err := l.dao.AddBandEvents(events); err != nil {
+				log.Printf("saveBandEvents error: %#v\n", err)
+			}
 		}
 	}
 }
@@ -244,11 +249,11 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 							l.fuse.Process("PARSE", err)
 						} else {
 							events = append(events, store.Event{
-								Band:  band.Name,
-								Title: eventTitle,
+								Band:  toUtf8(band.Name),
+								Title: toUtf8(eventTitle),
 								From:  from,
 								To:    to,
-								City:  eventLocation,
+								City:  toUtf8(eventLocation),
 								Link:  l.buildURL(eventHref),
 								Img:   l.buildURL(eventImg),
 							})
@@ -290,8 +295,8 @@ func (l *CMetalLoader) getLastEvents(band cmetalBand, s *goquery.Selection) ([]s
 
 			for i, j := k, len(tmpEvents)-1; i >= 0 && j >= 0; i, j = i-1, j-1 {
 				event := tmpEvents[j]
-				events[i].Band = band.Name
-				events[i].Title = event.Title
+				events[i].Band = toUtf8(band.Name)
+				events[i].Title = toUtf8(event.Title)
 				events[i].Link = event.Link
 			}
 		}

@@ -28,10 +28,8 @@ type (
 	}
 
 	DBConfig struct {
-		Type     string `yaml:"type"`
-		Network  string `yaml:"network"`
-		Address  string `yaml:"address"`
-		Password string `yaml:"password"`
+		Type             string `yaml:"type"`
+		ConnectionString string `yaml:"connection-string"`
 	}
 
 	CMetalConfig struct {

@@ -8,11 +8,13 @@ bot:
 
 # Configuration of db storage
 db:
-  type: redis # redis, memory
-  network: tcp # tcp/tcp4/tcp6/unix
-  address: redis:6379
-  username:
-  password:
+  type: pg # pg, memory
+  connection-string: "dbname=cmetal host=/run/postgresql/"
+  #connection-string: "postgres://cmetal@localhost/cmetal"
+  #network: tcp # tcp/tcp4/tcp6/unix
+  #address: redis:6379
+  #username:
+  #password:
 
 # Configuration of loader data from http://concerts-metal.com
 cmetal:

@@ -77,10 +77,19 @@ func parseLastEvents(text string) ([]store.Event, error) {
 			result[i] = store.Event{
 				From:  from,
 				To:    to,
-				City:  city,
-				Venue: venue,
+				City:  toUtf8(city),
+				Venue: toUtf8(venue),
 			}
 		}
 	}
 	return result, nil
+}
+
+func toUtf8(text string) string {
+	bbuf := []byte(text)
+	rbuf := make([]rune, len(bbuf))
+	for i, b := range bbuf {
+		rbuf[i] = rune(b)
+	}
+	return string(rbuf)
 }

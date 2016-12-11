@@ -8,7 +8,7 @@ import (
 	"github.com/austinov/go-recipes/slack-bot/loader/cmetal"
 	"github.com/austinov/go-recipes/slack-bot/store"
 	"github.com/austinov/go-recipes/slack-bot/store/memory"
-	"github.com/austinov/go-recipes/slack-bot/store/redigo"
+	"github.com/austinov/go-recipes/slack-bot/store/pg"
 )
 
 func main() {
@@ -33,8 +33,8 @@ func main() {
 
 func createDao(cfg config.DBConfig) store.Dao {
 	switch cfg.Type {
-	case "redis":
-		return redigo.New(cfg)
+	case "pg":
+		return pg.New(cfg)
 	case "memory":
 		return memory.New(cfg)
 	}

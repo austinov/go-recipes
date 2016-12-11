@@ -11,10 +11,8 @@ type Dao interface {
 	// It returns empty array if no events.
 	GetCalendar(band string, from, to int64) ([]Event, error)
 
-	/*
-		AddEvents(events []Event) error
-		GetCityEvents(city string, from, to int64) ([]Event, error)
-		GetBandEvents(band string, from, to int64) ([]Event, error)
-		GetBandInCityEvents(band string, city string, from, to int64) ([]Event, error)
-	*/
+	AddBandEvents(events []Event) error
+	GetCityEvents(city string, from, to, offset, limit int64) ([]Event, error)
+	GetBandEvents(band string, from, to, offset, limit int64) ([]Event, error)
+	GetBandInCityEvents(band string, city string, from, to, offset, limit int64) ([]Event, error)
 }
