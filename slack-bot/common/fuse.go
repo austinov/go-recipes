@@ -1,7 +1,8 @@
 package common
 
 import (
-	"log"
+	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -58,7 +59,7 @@ func (f *Fuse) setState(kind string, st state) {
 func (f *Fuse) Process(kind string, err error) {
 	state, ok := f.getState(kind)
 	if !ok {
-		log.Printf("Fuse warning: unknown kind of error (%s)\n", kind)
+		fmt.Fprintf(os.Stderr, "Fuse warning: unknown kind of error (%s)\n", kind)
 		return
 	}
 	if err == nil {

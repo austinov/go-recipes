@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -133,8 +134,6 @@ func (b *Bot) processMessages(wg *sync.WaitGroup) {
 }
 
 func (b *Bot) processMessage(msg Message) {
-	log.Printf("Process message: %#v\n", msg)
-
 	if msg.Type == "message" && strings.HasPrefix(msg.Text, b.id) {
 		// calendar <band> [next|last]
 		fields := strings.Fields(msg.Text)
@@ -178,12 +177,13 @@ func (b *Bot) calendarHandler(band, mode string) string {
 	default:
 		return b.helpHandler()
 	}
-	events, err := b.dao.GetCalendar(band, from, to)
+	events, err := b.dao.GetBandEvents(band, from, to, 0, 10)
 	if err != nil {
-		log.Println(err)
+		fmt.Fprintln(os.Stderr, err)
 		return "Sorry, we have some troubles"
 	} else {
-		return fmt.Sprintf("TODO %s (%v - %v) events for %s: %v\n", mode, time.Unix(from, 0), time.Unix(to, 0), band, events)
+		// TODO
+		return fmt.Sprintf("%s (%v - %v) events for %s: %v\n", mode, time.Unix(from, 0), time.Unix(to, 0), band, events)
 	}
 }
 
@@ -193,6 +193,6 @@ var messageId uint64
 func (b *Bot) sendReply(m Message) {
 	m.Id = atomic.AddUint64(&messageId, 1)
 	if err := websocket.JSON.Send(b.ws, m); err != nil {
-		log.Println("send reply failed with", err)
+		fmt.Fprintf(os.Stderr, "send reply failed with %#v\n", err)
 	}
 }

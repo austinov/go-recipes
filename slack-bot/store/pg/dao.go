@@ -51,19 +51,22 @@ const (
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	eventsInCity = `
-	    SELECT *
+	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE city_name = $1 AND begin_dt >= $2 AND end_dt <= $3`
+		WHERE city_name = $1 AND begin_dt >= $2 AND end_dt <= $3
+		ORDER BY begin_dt, band_name OFFSET $4 LIMIT $5`
 
 	eventsBand = `
-	    SELECT *
+	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE band_name = $1 AND begin_dt >= $2 AND end_dt <= $3`
+		WHERE band_name = $1 AND begin_dt >= $2 AND end_dt <= $3
+		ORDER BY begin_dt, city_name OFFSET $4 LIMIT $5`
 
 	eventsBandInCity = `
-	    SELECT *
+	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE band_name = $1 AND city_name = $2 AND begin_dt >= $3 AND end_dt <= $4`
+		WHERE band_name = $1 AND city_name = $2 AND begin_dt >= $3 AND end_dt <= $4
+		ORDER BY begin_dt OFFSET $5 LIMIT $6`
 )
 
 var (
@@ -119,7 +122,6 @@ func New(cfg config.DBConfig) store.Dao {
 }
 
 func (d *Dao) Close() error {
-	log.Println("Close Dao in pg package")
 	bandInsertStmt.Close()
 	cityInsertStmt.Close()
 	eventsClearStmt.Close()
@@ -129,11 +131,6 @@ func (d *Dao) Close() error {
 	eventsBandInCityStmt.Close()
 	d.db.Close()
 	return nil
-}
-
-func (d *Dao) GetCalendar(band string, from, to int64) ([]store.Event, error) {
-	// TODO
-	return nil, nil
 }
 
 func (d *Dao) AddBandEvents(events []store.Event) error {
@@ -164,7 +161,6 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 			if _, err = tx.Stmt(eventsInsertStmt).Exec(event.Title, event.From, event.To, bandId, cityId, event.Venue, event.Link, event.Img); err != nil {
 				return fmt.Errorf("insert band's event failed with %#v (event is %#v)\n", err, event)
 			}
-
 		}
 		return nil
 	}(); err != nil {
@@ -175,32 +171,53 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 }
 
 func (d *Dao) GetCityEvents(city string, from, to, offset, limit int64) ([]store.Event, error) {
-	// TODO
-	/*
-		rows, err := eventsInCityStmt.Query(city, from, to, offset, limit)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			if err = rows.Scan(&secs, &calls); err != nil {
-				return 0, 0, err
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return 0, 0, err
-		}
-	*/
-
-	return nil, nil
+	rows, err := eventsInCityStmt.Query(city, from, to, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return d.rowsToEvents(rows)
 }
 
 func (d *Dao) GetBandEvents(band string, from, to, offset, limit int64) ([]store.Event, error) {
-	// TODO
-	return nil, nil
+	rows, err := eventsBandStmt.Query(band, from, to, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return d.rowsToEvents(rows)
 }
 
 func (d *Dao) GetBandInCityEvents(band string, city string, from, to, offset, limit int64) ([]store.Event, error) {
-	// TODO
-	return nil, nil
+	rows, err := eventsBandInCityStmt.Query(band, city, from, to, offset, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return d.rowsToEvents(rows)
+}
+
+func (d *Dao) rowsToEvents(rows *sql.Rows) ([]store.Event, error) {
+	events := make([]store.Event, 0)
+	for rows.Next() {
+		var (
+			title, band, city string
+			venue, link, img  string
+			from, to          int64
+		)
+		if err := rows.Scan(&title, &from, &to, &band, &city, &venue, &link, &img); err != nil {
+			return nil, err
+		}
+		events = append(events, store.Event{
+			Band:  band,
+			Title: title,
+			From:  from,
+			To:    to,
+			City:  city,
+			Venue: venue,
+			Link:  link,
+			Img:   img,
+		})
+	}
+	return events, rows.Err()
 }

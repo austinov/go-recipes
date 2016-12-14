@@ -3,6 +3,7 @@ package cmetal
 import (
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -101,14 +102,6 @@ func (l *CMetalLoader) do() error {
 // loadBands loads bands without events and put them into outBands channel
 // to load the events these bands.
 func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- interface{}) {
-	/*
-		r, err := os.Open("./en.concerts-metal.com_search.html")
-		if err != nil {
-			log.Fatal(err)
-		}
-		doc, err := goquery.NewDocumentFromReader(r)
-	*/
-
 	// Load the HTML document
 	resp, err := l.httpclient.Get(l.cfg.BaseURL + "search.php")
 	if err != nil {
@@ -216,7 +209,7 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 		if len(events) > 0 {
 			log.Printf("saveBandEvents: %#v\n", events[0].Band)
 			if err := l.dao.AddBandEvents(events); err != nil {
-				log.Printf("saveBandEvents error: %#v\n", err)
+				fmt.Fprintf(os.Stderr, "save band's events failed with %#v\n", err)
 			}
 		}
 	}

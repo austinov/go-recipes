@@ -55,7 +55,7 @@ var once sync.Once
 
 func GetConfig() Config {
 	once.Do(func() {
-		log.Printf("Application started with config file '%s'", cfgPath)
+		log.Printf("Application started with config file '%s'\n", cfgPath)
 		data, err := ioutil.ReadFile(cfgPath)
 		if err != nil {
 			log.Fatal(err)
@@ -64,7 +64,7 @@ func GetConfig() Config {
 		if err != nil {
 			log.Fatal(err)
 		}
-		log.Printf("Parsed configuration: %#v", cfg)
+		log.Printf("Parsed configuration: %#v\n", cfg)
 	})
 	return cfg
 }
