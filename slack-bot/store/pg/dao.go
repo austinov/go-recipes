@@ -3,6 +3,7 @@ package pg
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	"database/sql"
 
@@ -16,10 +17,10 @@ const (
 	WITH s AS (
 	    SELECT id
 	    FROM band
-	    WHERE name = $1
+	    WHERE lower(name) = $1
 	), i as (
 	    INSERT INTO band (name)
-	    SELECT $1
+	    SELECT $2
 	    WHERE NOT EXISTS (SELECT 1 FROM s)
 	    RETURNING id
 	)
@@ -31,10 +32,10 @@ const (
 	WITH s AS (
 	    SELECT id
 	    FROM city
-	    WHERE name = $1
+	    WHERE lower(name) = $1
 	), i as (
 	    INSERT INTO city (name)
-	    SELECT $1
+	    SELECT $2
 	    WHERE NOT EXISTS (SELECT 1 FROM s)
 	    RETURNING id
 	)
@@ -48,24 +49,29 @@ const (
 
 	eventInsert = `
 	    INSERT INTO event(title, begin_dt, end_dt, band_id, city_id, venue, link, img)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		SELECT $1::VARCHAR, $2, $3, $4, $5, $6, $7, $8
+		WHERE NOT EXISTS(
+			SELECT id
+			FROM event
+			WHERE title = $1 AND begin_dt = $2 AND end_dt = $3 AND band_id = $4 AND city_id = $5
+		)`
 
 	eventsInCity = `
 	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE city_name = $1 AND begin_dt >= $2 AND end_dt <= $3
+		WHERE lower(city_name) = $1 AND begin_dt >= $2 AND end_dt <= $3
 		ORDER BY begin_dt, band_name OFFSET $4 LIMIT $5`
 
 	eventsBand = `
 	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE band_name = $1 AND begin_dt >= $2 AND end_dt <= $3
+		WHERE lower(band_name) = $1 AND begin_dt >= $2 AND end_dt <= $3
 		ORDER BY begin_dt, city_name OFFSET $4 LIMIT $5`
 
 	eventsBandInCity = `
 	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE band_name = $1 AND city_name = $2 AND begin_dt >= $3 AND end_dt <= $4
+		WHERE lower(band_name) = $1 AND lower(city_name) = $2 AND begin_dt >= $3 AND end_dt <= $4
 		ORDER BY begin_dt OFFSET $5 LIMIT $6`
 )
 
@@ -144,7 +150,8 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 	if err = func() error {
 		var bandId int32
 		// add band if not exist
-		if err := tx.Stmt(bandInsertStmt).QueryRow(events[0].Band).Scan(&bandId); err != nil {
+		bandName := events[0].Band
+		if err := tx.Stmt(bandInsertStmt).QueryRow(strings.ToLower(bandName), bandName).Scan(&bandId); err != nil {
 			return fmt.Errorf("insert band failed with %#v (band's name is %#v)\n", err, events[0].Band)
 		}
 		// clear previouse data
@@ -154,7 +161,7 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 		for _, event := range events {
 			var cityId int32
 			// add city if not exist
-			if err := tx.Stmt(cityInsertStmt).QueryRow(event.City).Scan(&cityId); err != nil {
+			if err := tx.Stmt(cityInsertStmt).QueryRow(strings.ToLower(event.City), event.City).Scan(&cityId); err != nil {
 				return fmt.Errorf("insert city failed with %#v (event is %#v)\n", err, event)
 			}
 			// add event
@@ -171,7 +178,7 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 }
 
 func (d *Dao) GetCityEvents(city string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsInCityStmt.Query(city, from, to, offset, limit)
+	rows, err := eventsInCityStmt.Query(strings.ToLower(city), from, to, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +187,7 @@ func (d *Dao) GetCityEvents(city string, from, to, offset, limit int64) ([]store
 }
 
 func (d *Dao) GetBandEvents(band string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsBandStmt.Query(band, from, to, offset, limit)
+	rows, err := eventsBandStmt.Query(strings.ToLower(band), from, to, offset, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +196,7 @@ func (d *Dao) GetBandEvents(band string, from, to, offset, limit int64) ([]store
 }
 
 func (d *Dao) GetBandInCityEvents(band string, city string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsBandInCityStmt.Query(band, city, from, to, offset, limit)
+	rows, err := eventsBandInCityStmt.Query(strings.ToLower(band), strings.ToLower(city), from, to, offset, limit)
 	if err != nil {
 		return nil, err
 	}

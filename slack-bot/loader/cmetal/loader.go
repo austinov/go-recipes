@@ -102,20 +102,10 @@ func (l *CMetalLoader) do() error {
 // loadBands loads bands without events and put them into outBands channel
 // to load the events these bands.
 func (l *CMetalLoader) loadBands(ignore <-chan interface{}, outBands chan<- interface{}) {
-	// Load the HTML document
-	resp, err := l.httpclient.Get(l.cfg.BaseURL + "search.php")
-	if err != nil {
-		l.fuse.Process("HTTP", err)
+	doc := l.loadHTMLDocument(l.cfg.BaseURL + "search.php")
+	if doc == nil {
 		return
 	}
-
-	doc, err := goquery.NewDocumentFromResponse(resp)
-	if err != nil {
-		l.fuse.Process("HTTP", err)
-		return
-	}
-	l.fuse.Process("HTTP", nil)
-
 	doc.Find("#groupe").Each(func(i int, s *goquery.Selection) {
 		// For each item found, get the band id and title
 		if band := s.Find("option"); band != nil {
@@ -149,35 +139,30 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 			l.fuse.Process("APP", fmt.Errorf("Illegal type of argument, expected dao.Band"))
 			continue
 		}
-		resp, err := l.httpclient.Get(l.cfg.BaseURL + "search.php?g=" + band.Id)
-		if err != nil {
-			l.fuse.Process("HTTP", err)
+		doc := l.loadHTMLDocument(l.cfg.BaseURL + "search.php?g=" + band.Id)
+		if doc == nil {
 			continue
 		}
-		doc, err := goquery.NewDocumentFromResponse(resp)
-		if err != nil {
-			l.fuse.Process("HTTP", err)
-			continue
-		}
-		l.fuse.Process("HTTP", nil)
 
 		events := make([]store.Event, 0)
 
 		/* Next events */
-		doc.Find("table tbody").Each(func(i int, s *goquery.Selection) {
-			if td := s.Find("td"); td != nil {
-				td.Each(func(j int, s1 *goquery.Selection) {
-					if strings.HasPrefix(s1.Text(), "Next events (") {
-						if nextEvents, err := l.getNextEvents(band, s1); err != nil {
-							l.fuse.Process("PARSE", err)
-						} else {
-							events = append(events, nextEvents...)
-							l.fuse.Process("PARSE", nil)
+		if table := doc.Find("table tbody"); table != nil {
+			table.Each(func(i int, s *goquery.Selection) {
+				if td := s.Find("td"); td != nil {
+					td.Each(func(j int, s1 *goquery.Selection) {
+						if strings.HasPrefix(s1.Text(), "Next events (") {
+							if nextEvents, err := l.getNextEvents(band, s1); err != nil {
+								l.fuse.Process("PARSE", err)
+							} else {
+								events = append(events, nextEvents...)
+								l.fuse.Process("PARSE", nil)
+							}
 						}
-					}
-				})
-			}
-		})
+					})
+				}
+			})
+		}
 
 		/* Last events */
 		doc.Find("table tbody").Each(func(i int, s *goquery.Selection) {
@@ -207,21 +192,21 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 			continue
 		}
 		if len(events) > 0 {
-			log.Printf("saveBandEvents: %#v\n", events[0].Band)
 			if err := l.dao.AddBandEvents(events); err != nil {
-				fmt.Fprintf(os.Stderr, "save band's events failed with %#v\n", err)
+				fmt.Fprintf(os.Stderr, "save band's (%s) events failed with %#v\n", events[0].Band, err)
 			}
+			log.Printf("saveBandEvents: %#v\n", events[0].Band)
 		}
 	}
 }
 
 // getNextEvents returns array of events which will be in the future from html nodes.
 func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]store.Event, error) {
-	clearDetail := func(s string) string {
+	clearLocation := func(s string) string {
 		if idx := strings.Index(s, " <img"); idx != -1 {
-			return s[:idx]
+			s = s[:idx]
 		}
-		return s
+		return strings.Split(s, " - ")[0]
 	}
 	if tdt := s.Find("table tbody td"); tdt != nil {
 		events := make([]store.Event, 0)
@@ -230,10 +215,11 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 				eventDetail := strings.SplitN(tdHtml, "<br/>", 3)
 				if len(eventDetail) > 2 {
 					eventDate := eventDetail[1]
-					eventLocation := clearDetail(eventDetail[2])
+					eventLocation := clearLocation(eventDetail[2])
 					if eventLink := s3.Find("a").Last(); eventLink != nil {
 						eventTitle, _ := eventLink.Attr("title")
 						eventHref, _ := eventLink.Attr("href")
+						eventHref = l.buildURL(eventHref)
 						eventImg := ""
 						if linkImg := eventLink.Find("img"); linkImg != nil {
 							eventImg, _ = linkImg.Attr("src")
@@ -247,8 +233,9 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 								From:  from,
 								To:    to,
 								City:  toUtf8(eventLocation),
-								Link:  l.buildURL(eventHref),
+								Link:  eventHref,
 								Img:   l.buildURL(eventImg),
+								Venue: l.getNextEventVenue(eventHref),
 							})
 							l.fuse.Process("PARSE", nil)
 						}
@@ -259,6 +246,23 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 		return events, nil
 	}
 	return nil, nil
+}
+
+func (l *CMetalLoader) getNextEventVenue(url string) string {
+	doc := l.loadHTMLDocument(url)
+	if doc == nil {
+		return ""
+	}
+	if div := doc.Find("div[itemprop='address']").First(); div != nil {
+		if td := div.Find("td"); td != nil {
+			if ftd := td.First(); ftd != nil && len(ftd.Nodes) > 0 {
+				if venueNode := ftd.Nodes[0].FirstChild; venueNode != nil {
+					return venueNode.Data
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // getLastEvents returns array of events whichi have been already from html nodes.
@@ -303,5 +307,21 @@ func (l *CMetalLoader) buildURL(href string) string {
 	if href != "" {
 		return l.cfg.BaseURL + href
 	}
-	return href
+	return ""
+}
+
+func (l *CMetalLoader) loadHTMLDocument(url string) *goquery.Document {
+	resp, err := l.httpclient.Get(url)
+	if err != nil {
+		l.fuse.Process("HTTP", err)
+		return nil
+	}
+	doc, err := goquery.NewDocumentFromResponse(resp)
+	if err != nil {
+		l.fuse.Process("HTTP", err)
+		return nil
+
+	}
+	l.fuse.Process("HTTP", nil)
+	return doc
 }

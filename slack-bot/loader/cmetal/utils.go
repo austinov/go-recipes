@@ -67,6 +67,9 @@ func parseLastEvents(text string) ([]store.Event, error) {
 		}
 		details := strings.Split(tail, ",")
 		city := strings.TrimSpace(details[0])
+		if strings.HasPrefix(city, "@ ") {
+			city = strings.Trim(city, "@ ")
+		}
 		venue := ""
 		if len(details) > 1 {
 			venue = strings.TrimSpace(details[1])

@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS band (
 );
 
 CREATE INDEX ind_band_id ON band USING btree (id);
-CREATE UNIQUE INDEX uni_band ON band (name);
+CREATE UNIQUE INDEX uni_band ON band (lower(name));
 
 CREATE TABLE IF NOT EXISTS city (
     "id"   serial primary key,
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS city (
 );
 
 CREATE INDEX ind_city_id ON city USING btree (id);
-CREATE UNIQUE INDEX uni_city ON city (name);
+CREATE UNIQUE INDEX uni_city ON city (lower(name));
 
 CREATE TABLE IF NOT EXISTS event (
     "id"       serial primary key,

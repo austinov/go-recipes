@@ -139,6 +139,7 @@ func (b *Bot) processMessage(msg Message) {
 		fields := strings.Fields(msg.Text)
 		l := len(fields)
 		if l > 2 && fields[1] == "calendar" {
+			// TODO process band/city with several words
 			band := fields[2]
 			mode := "all"
 			if l > 3 {
@@ -178,12 +179,18 @@ func (b *Bot) calendarHandler(band, mode string) string {
 		return b.helpHandler()
 	}
 	events, err := b.dao.GetBandEvents(band, from, to, 0, 10)
+	//events, err := b.dao.GetCityEvents(city, from, to, 0, 10)
+	//events, err := b.dao.GetBandInCityEvents(band, city, from, to, 0, 10)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return "Sorry, we have some troubles"
 	} else {
 		// TODO
-		return fmt.Sprintf("%s (%v - %v) events for %s: %v\n", mode, time.Unix(from, 0), time.Unix(to, 0), band, events)
+		out := ""
+		for _, event := range events {
+			out = out + fmt.Sprintf("%v - %v %s (%s - %s) %s\n", event.From, event.To, event.Title, event.City, event.Venue, event.Link)
+		}
+		return out
 	}
 }
 

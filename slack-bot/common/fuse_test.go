@@ -16,7 +16,10 @@ func TestFuse(t *testing.T) {
 		}))
 	fuse := NewFuse(fuseTriggers)
 	fuse.Process("APP", fmt.Errorf("APP error"))
+	fuse.Process("APP", nil)
 	fuse.Process("APP", fmt.Errorf("APP error"))
+	fuse.Process("APP", fmt.Errorf("APP error"))
+	assert.False(t, triggered)
 	fuse.Process("APP", fmt.Errorf("APP error"))
 	assert.True(t, triggered)
 }
