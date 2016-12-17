@@ -64,6 +64,7 @@ func (f *Fuse) Process(kind string, err error) {
 	}
 	if err == nil {
 		atomic.StoreInt32(&state.errors, 0)
+		f.setState(kind, state)
 	} else {
 		errors := atomic.AddInt32(&state.errors, 1)
 		f.setState(kind, state)
