@@ -21,4 +21,4 @@ cmetal:
   base-url: http://en.concerts-metal.com/
   # frequency run the loader
   # it will run once if the value is empty 
-  frequency: 12h
+  frequency: 24h

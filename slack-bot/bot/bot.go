@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/austinov/go-recipes/backoff"
 	"github.com/austinov/go-recipes/slack-bot/common"
 	"github.com/austinov/go-recipes/slack-bot/config"
 	"github.com/austinov/go-recipes/slack-bot/store"
@@ -20,17 +21,16 @@ import (
 )
 
 const (
-	apiURL      = "https://api.slack.com/"
-	startRtmURL = "https://slack.com/api/rtm.start?token=%s"
+	apiURL               = "https://api.slack.com/"
+	startRtmURL          = "https://slack.com/api/rtm.start?token=%s"
+	attemptsToReceiveMsg = 3
 )
 
 type Bot struct {
-	cfg      config.BotConfig
-	dao      store.Dao
-	ws       *websocket.Conn
-	id       string
-	messages chan Message
-	replies  chan Message
+	cfg config.BotConfig
+	dao store.Dao
+	ws  *websocket.Conn
+	id  string
 }
 
 func New(cfg config.BotConfig, dao store.Dao) *Bot {
@@ -52,21 +52,17 @@ func (b *Bot) Start() {
 		log.Fatal(err)
 	}
 
-	b.messages = make(chan Message, 1)
-	b.replies = make(chan Message, 1)
-
 	var wg sync.WaitGroup
 
 	wg.Add(1)
-	go b.pollMessages(&wg)
-	for i := 0; i < b.cfg.NumHandlers; i++ {
-		wg.Add(1)
-		go b.processMessages(&wg)
-	}
-	for i := 0; i < b.cfg.NumSenders; i++ {
-		wg.Add(1)
-		go b.processReplies(&wg)
-	}
+	messages := make(chan interface{}, b.cfg.NumHandlers)
+	common.RunWorkers(&wg, nil, messages, 1, b.pollMessages)
+	wg.Add(1)
+	replies := make(chan interface{}, b.cfg.NumSenders)
+	common.RunWorkers(&wg, messages, replies, b.cfg.NumHandlers, b.processMessages)
+	wg.Add(1)
+	common.RunWorkers(&wg, replies, nil, b.cfg.NumSenders, b.processReplies)
+
 	wg.Wait()
 }
 
@@ -104,36 +100,34 @@ func (b *Bot) connect() error {
 	return nil
 }
 
-func (b *Bot) pollMessages(wg *sync.WaitGroup) {
-	defer wg.Done()
+func (b *Bot) pollMessages(ignore <-chan interface{}, outMessages chan<- interface{}) {
+	eb := backoff.NewExpBackoff()
 	for {
-		b.poll()
+		var m Message
+		if err := websocket.JSON.Receive(b.ws, &m); err != nil {
+			fmt.Fprintf(os.Stderr, "receive message from socket failed with %#v\n", err)
+			if eb.Attempts() >= uint64(attemptsToReceiveMsg) {
+				os.Exit(1)
+			}
+			<-eb.Delay()
+		} else {
+			eb.Reset()
+			outMessages <- m
+		}
 	}
 }
 
-func (b *Bot) processReplies(wg *sync.WaitGroup) {
-	defer wg.Done()
-	for reply := range b.replies {
-		b.sendReply(reply)
+func (b *Bot) processMessages(inMessages <-chan interface{}, outReplies chan<- interface{}) {
+	for e := range inMessages {
+		message, ok := e.(Message)
+		if !ok {
+			log.Fatalln("Illegal type of argument, expected Message")
+		}
+		go b.processMessage(message, outReplies)
 	}
 }
 
-func (b *Bot) poll() {
-	var m Message
-	if err := websocket.JSON.Receive(b.ws, &m); err != nil {
-		log.Fatal(err) // TODO backoff
-	}
-	b.messages <- m
-}
-
-func (b *Bot) processMessages(wg *sync.WaitGroup) {
-	defer wg.Done()
-	for message := range b.messages {
-		go b.processMessage(message)
-	}
-}
-
-func (b *Bot) processMessage(msg Message) {
+func (b *Bot) processMessage(msg Message, outReplies chan<- interface{}) {
 	if msg.Type == "message" && strings.HasPrefix(msg.Text, b.id) {
 		// calendar <band> [next|last]
 		fields := strings.Fields(msg.Text)
@@ -149,7 +143,23 @@ func (b *Bot) processMessage(msg Message) {
 		} else {
 			msg.Text = b.helpHandler()
 		}
-		b.replies <- msg
+		outReplies <- msg
+	}
+}
+
+// sequentially increased message counter
+var messageId uint64
+
+func (b *Bot) processReplies(inReplies <-chan interface{}, ignore chan<- interface{}) {
+	for e := range inReplies {
+		reply, ok := e.(Message)
+		if !ok {
+			log.Fatalln("Illegal type of argument, expected Message")
+		}
+		reply.Id = atomic.AddUint64(&messageId, 1)
+		if err := websocket.JSON.Send(b.ws, reply); err != nil {
+			fmt.Fprintf(os.Stderr, "send reply failed with %#v\n", err)
+		}
 	}
 }
 
@@ -186,20 +196,37 @@ func (b *Bot) calendarHandler(band, mode string) string {
 		return "Sorry, we have some troubles"
 	} else {
 		// TODO
-		out := ""
-		for _, event := range events {
-			out = out + fmt.Sprintf("%v - %v %s (%s - %s) %s\n", event.From, event.To, event.Title, event.City, event.Venue, event.Link)
+		if len(events) == 0 {
+			return fmt.Sprintf("Sorry, we have not info about *%s*'s events.", band)
+		} else {
+			out := fmt.Sprintf("We known about the following events of *%s*:\n", band)
+			for _, event := range events {
+				out = out + formatEvent(event)
+			}
+			return out
 		}
-		return out
 	}
 }
 
-// sequentially increased message counter
-var messageId uint64
-
-func (b *Bot) sendReply(m Message) {
-	m.Id = atomic.AddUint64(&messageId, 1)
-	if err := websocket.JSON.Send(b.ws, m); err != nil {
-		fmt.Fprintf(os.Stderr, "send reply failed with %#v\n", err)
+func formatEvent(e store.Event) string {
+	fd := func(sec int64) string {
+		return time.Unix(sec, 0).Format("02 Jar 2006")
 	}
+	var dates, location, link string
+	if e.From != e.To {
+		dates = fmt.Sprintf("%s - %s", fd(e.From), fd(e.To))
+	} else {
+		dates = fmt.Sprintf("%s", fd(e.From))
+	}
+	if e.City != "" && e.Venue != "" {
+		location = fmt.Sprintf("(%s - _%s_)", e.City, e.Venue)
+	} else if e.City != "" {
+		location = fmt.Sprintf("(%s)", e.City)
+	} else if e.Venue != "" {
+		location = fmt.Sprintf("(_%s_)", e.Venue)
+	}
+	if e.Link != "" {
+		link = fmt.Sprintf("- %s", e.Link)
+	}
+	return fmt.Sprintf("> %s, *%s* %s %s\n", dates, e.Title, location, link)
 }

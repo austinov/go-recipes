@@ -48,7 +48,7 @@ func New(cfg config.CMetalConfig, dao store.Dao) loader.Loader {
 		}))
 	fuseTriggers = append(fuseTriggers,
 		common.NewFuseTrigger("PARSE", 1, func(kind string, err error) {
-			log.Fatalln("Fuse triggered for %s: %#v\n", kind, err)
+			log.Fatalf("Fuse triggered for %s: %#v\n", kind, err)
 		}))
 	loader.fuse = common.NewFuse(fuseTriggers)
 	return loader
@@ -153,7 +153,7 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 					td.Each(func(j int, s1 *goquery.Selection) {
 						if strings.HasPrefix(s1.Text(), "Next events (") {
 							if nextEvents, err := l.getNextEvents(band, s1); err != nil {
-								l.fuse.Process("PARSE", err)
+								l.fuse.Process("PARSE", fmt.Errorf("parse next event for %#v failed with %#v", band, err))
 							} else {
 								events = append(events, nextEvents...)
 								l.fuse.Process("PARSE", nil)
@@ -170,7 +170,7 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 				td.Each(func(j int, s1 *goquery.Selection) {
 					if strings.Contains(s1.Text(), "Last events (") {
 						if lastEvents, err := l.getLastEvents(band, s1); err != nil {
-							l.fuse.Process("PARSE", err)
+							l.fuse.Process("PARSE", fmt.Errorf("parse last event for %#v failed with %#v", band, err))
 						} else {
 							events = append(events, lastEvents...)
 							l.fuse.Process("PARSE", nil)
@@ -184,7 +184,7 @@ func (l *CMetalLoader) loadBandEvents(inBands <-chan interface{}, outEvents chan
 }
 
 // saveBandEvents saves band's events from inEvents channel into DB.
-func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- interface{}) {
+func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, ignore chan<- interface{}) {
 	for e := range inEvents {
 		events, ok := e.([]store.Event)
 		if !ok {
@@ -202,7 +202,7 @@ func (l *CMetalLoader) saveBandEvents(inEvents <-chan interface{}, out chan<- in
 
 // getNextEvents returns array of events which will be in the future from html nodes.
 func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]store.Event, error) {
-	clearLocation := func(s string) string {
+	clearCity := func(s string) string {
 		if idx := strings.Index(s, " <img"); idx != -1 {
 			s = s[:idx]
 		}
@@ -214,8 +214,6 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 			if tdHtml, err := s3.Html(); err == nil {
 				eventDetail := strings.SplitN(tdHtml, "<br/>", 3)
 				if len(eventDetail) > 2 {
-					eventDate := eventDetail[1]
-					eventLocation := clearLocation(eventDetail[2])
 					if eventLink := s3.Find("a").Last(); eventLink != nil {
 						eventTitle, _ := eventLink.Attr("title")
 						eventHref, _ := eventLink.Attr("href")
@@ -224,21 +222,31 @@ func (l *CMetalLoader) getNextEvents(band cmetalBand, s *goquery.Selection) ([]s
 						if linkImg := eventLink.Find("img"); linkImg != nil {
 							eventImg, _ = linkImg.Attr("src")
 						}
-						if from, to, err := parseDate(eventDate); err != nil {
-							l.fuse.Process("PARSE", err)
-						} else {
-							events = append(events, store.Event{
-								Band:  toUtf8(band.Name),
-								Title: toUtf8(eventTitle),
-								From:  from,
-								To:    to,
-								City:  toUtf8(eventLocation),
-								Link:  eventHref,
-								Img:   l.buildURL(eventImg),
-								Venue: l.getNextEventVenue(eventHref),
-							})
-							l.fuse.Process("PARSE", nil)
+						eventDate := eventDetail[1]
+						eventCity := clearCity(eventDetail[2])
+						from, to, err := parseDate(eventDate)
+						if err != nil {
+							// when event has no image city locates in date place in html
+							// but date locates right after <h5>
+							if dates := strings.Split(eventDetail[0], "</a></h5>"); len(dates) == 2 {
+								eventCity = clearCity(eventDate)
+								from, to, err = parseDate(dates[1])
+							}
 						}
+						if err != nil {
+							l.fuse.Process("PARSE", fmt.Errorf("parse date next event for %#v failed with %#v", band, err))
+						}
+						events = append(events, store.Event{
+							Band:  toUtf8(band.Name),
+							Title: toUtf8(eventTitle),
+							From:  from,
+							To:    to,
+							City:  toUtf8(eventCity),
+							Link:  eventHref,
+							Img:   l.buildURL(eventImg),
+							Venue: l.getNextEventVenue(eventHref),
+						})
+						l.fuse.Process("PARSE", nil)
 					}
 				}
 			}
