@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -129,17 +130,10 @@ func (b *Bot) processMessages(inMessages <-chan interface{}, outReplies chan<- i
 
 func (b *Bot) processMessage(msg Message, outReplies chan<- interface{}) {
 	if msg.Type == "message" && strings.HasPrefix(msg.Text, b.id) {
-		// calendar <band> [next|last]
 		fields := strings.Fields(msg.Text)
 		l := len(fields)
-		if l > 2 && fields[1] == "calendar" {
-			// TODO process band/city with several words
-			band := fields[2]
-			mode := "all"
-			if l > 3 {
-				mode = fields[3]
-			}
-			msg.Text = b.calendarHandler(band, mode)
+		if l > 2 && fields[1] == "events" {
+			msg.Text = b.calendarHandler(msg.Text)
 		} else {
 			msg.Text = b.helpHandler()
 		}
@@ -165,52 +159,67 @@ func (b *Bot) processReplies(inReplies <-chan interface{}, ignore chan<- interfa
 
 // helpHandler returns a reply containing help text.
 func (b *Bot) helpHandler() string {
-	return "Please, use the follow commands:\n" +
-		"calendar <band> [next|past] - show calendar for the band (next or past events, all events when no mode)\n"
+	buffer := bytes.NewBufferString("Please, use commands like the follow:\n")
+	buffer.WriteString(fmt.Sprintf(">%s events of Metallica - list events of Metallica\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in Paris     - list events in Paris\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in London at 27 May 2017 - list events in city at the date (date format may be also dd.MM.yyyy or dd/MM/yyyy)\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events of System of a Down in Dresden since 01 Jan 2017 - list events of band in city since the date\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in Helsinki till 01 Jan 2017 - list events in city till the date\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in St Petersburg since 15 Dec 2016 till 01 Jan 2017 - list events in city since/till dates\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events of Aerosmith for 15 Dec 2016 and 01 Jan 2017 - list events of band for period\n", b.id))
+	return buffer.String()
 }
 
 // calendarHandler returns calendar for the band.
-func (b *Bot) calendarHandler(band, mode string) string {
-	// TODO count, offset
-	now := time.Now()
-	var from, to int64
-	switch mode {
-	case "all":
-		// all events
-		to = now.AddDate(10, 0, 0).Unix()
-	case "past":
-		// only past events to the present day
-		to = common.EndOfDate(now).Unix()
-	case "next":
-		// only future events
-		from = common.BeginOfDate(now).Unix()
-		to = now.AddDate(10, 0, 0).Unix()
-	default:
+func (b *Bot) calendarHandler(text string) string {
+	query := Parse(text)
+	if !query.IsValid() {
 		return b.helpHandler()
 	}
-	events, err := b.dao.GetBandEvents(band, from, to, 0, 10)
-	//events, err := b.dao.GetCityEvents(city, from, to, 0, 10)
-	//events, err := b.dao.GetBandInCityEvents(band, city, from, to, 0, 10)
+
+	if query.To == 0 {
+		query.To = time.Now().AddDate(10, 0, 0).Unix()
+	}
+	offset, limit := 0, 42
+	events, err := b.dao.GetEvents(query.Band, query.City, query.From, query.To, offset, limit)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return "Sorry, we have some troubles"
 	} else {
-		// TODO
-		if len(events) == 0 {
-			return fmt.Sprintf("Sorry, we have not info about *%s*'s events.", band)
+		l := len(events)
+		if l == 0 {
+			return formatHeader(query, true)
 		} else {
-			out := fmt.Sprintf("We known about the following events of *%s*:\n", band)
+			out := formatHeader(query, false)
 			for _, event := range events {
-				out = out + formatEvent(event)
+				out += formatEvent(event)
+			}
+			if l >= limit {
+				out += formatFooter(b.id, query, events[l-1])
 			}
 			return out
 		}
 	}
 }
 
+func formatHeader(q Query, empty bool) string {
+	var band, city string
+	if q.Band != "" {
+		band = fmt.Sprintf(" of *%s*", q.Band)
+	}
+	if q.City != "" {
+		city = fmt.Sprintf(" in _%s_", q.City)
+	}
+	if empty {
+		return fmt.Sprintf("We have no more info about events%s%s.", band, city)
+	} else {
+		return fmt.Sprintf("We known about the following events%s%s:\n", band, city)
+	}
+}
+
 func formatEvent(e store.Event) string {
 	fd := func(sec int64) string {
-		return time.Unix(sec, 0).Format("02 Jar 2006")
+		return time.Unix(sec, 0).Format("02 Jan 2006")
 	}
 	var dates, location, link string
 	if e.From != e.To {
@@ -228,5 +237,17 @@ func formatEvent(e store.Event) string {
 	if e.Link != "" {
 		link = fmt.Sprintf("- %s", e.Link)
 	}
-	return fmt.Sprintf("> %s, *%s* %s %s\n", dates, e.Title, location, link)
+	return fmt.Sprintf(">%s, *%s* %s %s\n", dates, e.Title, location, link)
+}
+
+func formatFooter(id string, q Query, e store.Event) string {
+	var band, city string
+	if q.Band != "" {
+		band = fmt.Sprintf(" of %s", q.Band)
+	}
+	if q.City != "" {
+		city = fmt.Sprintf(" in %s", q.City)
+	}
+	since := time.Unix(e.From, 0).Format("02 Jan 2006")
+	return fmt.Sprintf("To load next portion of events you may use:\n>%s events%s%s since %s", id, band, city, since)
 }

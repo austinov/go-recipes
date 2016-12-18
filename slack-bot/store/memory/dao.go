@@ -21,17 +21,7 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 	return nil
 }
 
-func (d *Dao) GetCityEvents(city string, from, to, offset, limit int64) ([]store.Event, error) {
-	// TODO
-	return nil, nil
-}
-
-func (d *Dao) GetBandEvents(band string, from, to, offset, limit int64) ([]store.Event, error) {
-	// TODO
-	return nil, nil
-}
-
-func (d *Dao) GetBandInCityEvents(band string, city string, from, to, offset, limit int64) ([]store.Event, error) {
+func (d *Dao) GetEvents(band string, city string, from, to int64, offset, limit int) ([]store.Event, error) {
 	// TODO
 	return nil, nil
 }

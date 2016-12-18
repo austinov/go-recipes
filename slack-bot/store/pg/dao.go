@@ -56,22 +56,12 @@ const (
 			WHERE title = $1 AND begin_dt = $2 AND end_dt = $3 AND band_id = $4 AND city_id = $5
 		)`
 
-	eventsInCity = `
-	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
-		FROM vw_events
-		WHERE lower(city_name) = $1 AND begin_dt >= $2 AND end_dt <= $3
-		ORDER BY begin_dt, band_name OFFSET $4 LIMIT $5`
-
-	eventsBand = `
-	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
-		FROM vw_events
-		WHERE lower(band_name) = $1 AND begin_dt >= $2 AND end_dt <= $3
-		ORDER BY begin_dt, city_name OFFSET $4 LIMIT $5`
-
 	eventsBandInCity = `
 	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
 		FROM vw_events
-		WHERE lower(band_name) = $1 AND lower(city_name) = $2 AND begin_dt >= $3 AND end_dt <= $4
+		WHERE lower(band_name) = COALESCE($1, lower(band_name)) AND 
+		      lower(city_name) = COALESCE($2, lower(city_name)) AND
+			  begin_dt >= $3 AND end_dt <= $4
 		ORDER BY begin_dt OFFSET $5 LIMIT $6`
 )
 
@@ -80,8 +70,6 @@ var (
 	cityInsertStmt       *sql.Stmt
 	eventsClearStmt      *sql.Stmt
 	eventsInsertStmt     *sql.Stmt
-	eventsInCityStmt     *sql.Stmt
-	eventsBandStmt       *sql.Stmt
 	eventsBandInCityStmt *sql.Stmt
 )
 
@@ -110,14 +98,6 @@ func New(cfg config.DBConfig) store.Dao {
 	if err != nil {
 		log.Fatal(err)
 	}
-	eventsInCityStmt, err = db.Prepare(eventsInCity)
-	if err != nil {
-		log.Fatal(err)
-	}
-	eventsBandStmt, err = db.Prepare(eventsBand)
-	if err != nil {
-		log.Fatal(err)
-	}
 	eventsBandInCityStmt, err = db.Prepare(eventsBandInCity)
 	if err != nil {
 		log.Fatal(err)
@@ -132,8 +112,6 @@ func (d *Dao) Close() error {
 	cityInsertStmt.Close()
 	eventsClearStmt.Close()
 	eventsInsertStmt.Close()
-	eventsInCityStmt.Close()
-	eventsBandStmt.Close()
 	eventsBandInCityStmt.Close()
 	d.db.Close()
 	return nil
@@ -177,26 +155,17 @@ func (d *Dao) AddBandEvents(events []store.Event) error {
 	return tx.Commit()
 }
 
-func (d *Dao) GetCityEvents(city string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsInCityStmt.Query(strings.ToLower(city), from, to, offset, limit)
-	if err != nil {
-		return nil, err
+func (d *Dao) GetEvents(band string, city string, from, to int64, offset, limit int) ([]store.Event, error) {
+	var b interface{} = nil
+	var c interface{} = nil
+	if band != "" {
+		b = strings.ToLower(band)
 	}
-	defer rows.Close()
-	return d.rowsToEvents(rows)
-}
-
-func (d *Dao) GetBandEvents(band string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsBandStmt.Query(strings.ToLower(band), from, to, offset, limit)
-	if err != nil {
-		return nil, err
+	if city != "" {
+		c = strings.ToLower(city)
 	}
-	defer rows.Close()
-	return d.rowsToEvents(rows)
-}
 
-func (d *Dao) GetBandInCityEvents(band string, city string, from, to, offset, limit int64) ([]store.Event, error) {
-	rows, err := eventsBandInCityStmt.Query(strings.ToLower(band), strings.ToLower(city), from, to, offset, limit)
+	rows, err := eventsBandInCityStmt.Query(b, c, from, to, offset, limit)
 	if err != nil {
 		return nil, err
 	}
