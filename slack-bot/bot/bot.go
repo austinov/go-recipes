@@ -130,10 +130,9 @@ func (b *Bot) processMessages(inMessages <-chan interface{}, outReplies chan<- i
 
 func (b *Bot) processMessage(msg Message, outReplies chan<- interface{}) {
 	if msg.Type == "message" && strings.HasPrefix(msg.Text, b.id) {
-		fields := strings.Fields(msg.Text)
-		l := len(fields)
-		if l > 2 && fields[1] == "events" {
-			msg.Text = b.calendarHandler(msg.Text)
+		query := Parse(msg.Text)
+		if query.IsValid() && query.Command == "events" {
+			msg.Text = b.calendarHandler(query)
 		} else {
 			msg.Text = b.helpHandler()
 		}
@@ -171,12 +170,7 @@ func (b *Bot) helpHandler() string {
 }
 
 // calendarHandler returns calendar for the band.
-func (b *Bot) calendarHandler(text string) string {
-	query := Parse(text)
-	if !query.IsValid() {
-		return b.helpHandler()
-	}
-
+func (b *Bot) calendarHandler(query Query) string {
 	if query.To == 0 {
 		query.To = time.Now().AddDate(10, 0, 0).Unix()
 	}

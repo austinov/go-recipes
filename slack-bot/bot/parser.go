@@ -9,14 +9,15 @@ import (
 )
 
 type Query struct {
-	Band string
-	City string
-	From int64
-	To   int64
+	Command string
+	Band    string
+	City    string
+	From    int64
+	To      int64
 }
 
 func (q Query) IsValid() bool {
-	return q.Band != "" || q.City != ""
+	return q.Command != "" && (q.Band != "" || q.City != "")
 }
 
 const (
@@ -55,7 +56,10 @@ func Parse(text string) Query {
 	addToList(l, between, strings.Index(m, paramKinds[between]))
 
 	query := Query{}
-
+	fields := strings.Fields(text)
+	if len(fields) > 1 {
+		query.Command = fields[1]
+	}
 	for e := l.Front(); e != nil; e = e.Next() {
 		p := e.Value.(param)
 		begin, end := p.pos, len(m)
