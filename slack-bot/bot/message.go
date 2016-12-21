@@ -22,7 +22,7 @@ type ResponseSelf struct {
 type Attachment struct {
 	Text       string   `json:"text"`
 	Fallback   string   `json:"fallback"`
-	FallbackId string   `json:"fallback_id"`
+	CallbackId string   `json:"callback_id"`
 	Color      string   `json:"color"`
 	Type       string   `json:"attachment_type"`
 	Actions    []Action `json:"actions"`

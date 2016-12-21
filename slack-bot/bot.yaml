@@ -1,20 +1,16 @@
 # Configuration of bot
 bot:
   token: xxx
-  # number of go-routines to process messages
-  num-handlers: 2 # default value is 1
-  # number of go-routines to send replies 
-  num-senders: 3 #default value is 1
+  # number of go-routines to process messages, default is 1
+  num-handlers: 2
+  # number of go-routines to send replies, default is 1
+  num-senders: 3
 
 # Configuration of db storage
 db:
-  type: pg # pg, memory
+  type: pg # pg
   connection-string: "dbname=cmetal host=/run/postgresql/"
   #connection-string: "postgres://cmetal@localhost/cmetal"
-  #network: tcp # tcp/tcp4/tcp6/unix
-  #address: redis:6379
-  #username:
-  #password:
 
 # Configuration of loader data from http://concerts-metal.com
 cmetal:
@@ -22,3 +18,7 @@ cmetal:
   # frequency run the loader
   # it will run once if the value is empty 
   frequency: 24h
+  # number of go-routines to load data from concerts-metal.com 
+  num-loaders: 13
+  # number of go-routines to store events into db
+  num-savers: 10

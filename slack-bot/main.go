@@ -7,7 +7,6 @@ import (
 	"github.com/austinov/go-recipes/slack-bot/config"
 	"github.com/austinov/go-recipes/slack-bot/loader/cmetal"
 	"github.com/austinov/go-recipes/slack-bot/store"
-	"github.com/austinov/go-recipes/slack-bot/store/memory"
 	"github.com/austinov/go-recipes/slack-bot/store/pg"
 )
 
@@ -35,8 +34,6 @@ func createDao(cfg config.DBConfig) store.Dao {
 	switch cfg.Type {
 	case "pg":
 		return pg.New(cfg)
-	case "memory":
-		return memory.New(cfg)
 	}
 	log.Fatal("Unknown db type " + cfg.Type)
 	return nil

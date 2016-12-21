@@ -1,0 +1,16 @@
+package: github.com/austinov/go-recipes
+import:
+- package: github.com/PuerkitoBio/goquery
+- package: github.com/jroimartin/gocui
+- package: github.com/lib/pq
+- package: github.com/ugorji/go
+  subpackages:
+  - codec
+- package: golang.org/x/net
+  subpackages:
+  - websocket
+- package: gopkg.in/yaml.v2
+testImport:
+- package: github.com/stretchr/testify
+  subpackages:
+  - assert
