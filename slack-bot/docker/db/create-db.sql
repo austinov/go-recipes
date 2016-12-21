@@ -1,8 +1,5 @@
 DROP DATABASE IF EXISTS cmetal;
---DROP USER IF EXISTS docker;
---CREATE USER docker;
 CREATE DATABASE cmetal;
---GRANT ALL PRIVILEGES ON DATABASE cmetal TO docker;
 
 \connect cmetal;
 
