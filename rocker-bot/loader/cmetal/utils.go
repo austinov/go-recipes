@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/austinov/go-recipes/slack-bot/store"
+	"github.com/austinov/go-recipes/rocker-bot/store"
 )
 
 var re = regexp.MustCompile("\\d{1,2}/\\d{1,2}/\\d{4}")

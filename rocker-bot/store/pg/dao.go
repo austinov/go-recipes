@@ -7,8 +7,8 @@ import (
 
 	"database/sql"
 
-	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/store"
+	"github.com/austinov/go-recipes/rocker-bot/config"
+	"github.com/austinov/go-recipes/rocker-bot/store"
 	_ "github.com/lib/pq"
 )
 

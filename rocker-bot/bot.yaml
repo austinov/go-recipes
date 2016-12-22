@@ -9,8 +9,8 @@ bot:
 # Configuration of db storage
 db:
   type: pg # pg
-  connection-string: "dbname=cmetal host=/run/postgresql/"
-  #connection-string: "postgres://cmetal@localhost/cmetal"
+  connection-string: "dbname=cmetal host=pgdb sslmode=disable user=postgres" 
+  #connection-string: "dbname=cmetal host=/run/postgresql/" 
 
 # Configuration of loader data from http://concerts-metal.com
 cmetal:

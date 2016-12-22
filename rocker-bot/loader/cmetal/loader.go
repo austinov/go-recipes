@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/austinov/go-recipes/slack-bot/common"
-	"github.com/austinov/go-recipes/slack-bot/config"
-	"github.com/austinov/go-recipes/slack-bot/loader"
-	"github.com/austinov/go-recipes/slack-bot/store"
+	"github.com/austinov/go-recipes/rocker-bot/common"
+	"github.com/austinov/go-recipes/rocker-bot/config"
+	"github.com/austinov/go-recipes/rocker-bot/loader"
+	"github.com/austinov/go-recipes/rocker-bot/store"
 )
 
 type cmetalBand struct {
