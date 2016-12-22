@@ -162,10 +162,10 @@ func (b *Bot) helpHandler() string {
 	buffer.WriteString(fmt.Sprintf(">%s events of Metallica - list events of Metallica\n", b.id))
 	buffer.WriteString(fmt.Sprintf(">%s events in Paris     - list events in Paris\n", b.id))
 	buffer.WriteString(fmt.Sprintf(">%s events in London at 27 May 2017 - list events in city at the date (date format may be also dd.MM.yyyy or dd/MM/yyyy)\n", b.id))
-	buffer.WriteString(fmt.Sprintf(">%s events of System of a Down in Dresden since 01 Jan 2017 - list events of band in city since the date\n", b.id))
-	buffer.WriteString(fmt.Sprintf(">%s events in Helsinki till 01 Jan 2017 - list events in city till the date\n", b.id))
-	buffer.WriteString(fmt.Sprintf(">%s events in St Petersburg since 15 Dec 2016 till 01 Jan 2017 - list events in city since/till dates\n", b.id))
-	buffer.WriteString(fmt.Sprintf(">%s events of Aerosmith for 15 Dec 2016 and 01 Jan 2017 - list events of band for period\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events of System of a Down in Dresden since 1 Jan 2017 - list events of band in city since the date\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in Helsinki till 1 Jan 2017 - list events in city till the date\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events in St Petersburg since 15 Dec 2016 till 1 Jan 2017 - list events in city since/till dates\n", b.id))
+	buffer.WriteString(fmt.Sprintf(">%s events of Aerosmith for 15 Dec 2016 and 13 Jan 2017 - list events of band for period\n", b.id))
 	return buffer.String()
 }
 
@@ -213,7 +213,7 @@ func formatHeader(q Query, empty bool) string {
 
 func formatEvent(e store.Event) string {
 	fd := func(sec int64) string {
-		return time.Unix(sec, 0).Format("02 Jan 2006")
+		return time.Unix(sec, 0).Format("2 Jan 2006")
 	}
 	var dates, location, link string
 	if e.From != e.To {

@@ -57,11 +57,12 @@ const (
 		)`
 
 	eventsBandInCity = `
-	    SELECT title, begin_dt, end_dt, band_name, city_name, venue, link, img
+	    SELECT title, begin_dt, end_dt, city_name, venue, link, img, string_agg(DISTINCT band_name, ', ') AS bands
 		FROM vw_events
 		WHERE lower(band_name) = COALESCE($1, lower(band_name)) AND 
 		      lower(city_name) = COALESCE($2, lower(city_name)) AND
 			  begin_dt >= $3 AND end_dt <= $4
+		GROUP BY title, begin_dt, end_dt, city_name, venue, link, img
 		ORDER BY begin_dt OFFSET $5 LIMIT $6`
 )
 
@@ -177,15 +178,15 @@ func (d *Dao) rowsToEvents(rows *sql.Rows) ([]store.Event, error) {
 	events := make([]store.Event, 0)
 	for rows.Next() {
 		var (
-			title, band, city string
-			venue, link, img  string
-			from, to          int64
+			title, bands, city string
+			venue, link, img   string
+			from, to           int64
 		)
-		if err := rows.Scan(&title, &from, &to, &band, &city, &venue, &link, &img); err != nil {
+		if err := rows.Scan(&title, &from, &to, &city, &venue, &link, &img, &bands); err != nil {
 			return nil, err
 		}
 		events = append(events, store.Event{
-			Band:  band,
+			Band:  bands,
 			Title: title,
 			From:  from,
 			To:    to,

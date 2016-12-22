@@ -21,7 +21,7 @@ func main() {
 
 	l := cmetal.New(cfg.CMetal, dao)
 	// start loader in separate go-routine
-	go l.Start()
+	//go l.Start()
 
 	b := bot.New(cfg.Bot, dao)
 	// start bot and block until return

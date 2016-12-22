@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -v
+
+# (re)create empty DB
+
+dropdb cmetal
+sudo -u postgres dropuser $USER 
+sudo -u postgres createuser -d $USER
+createdb cmetal
+
+# create tables
+
+psql -d cmetal -f ./create-tables.sql

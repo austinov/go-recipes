@@ -40,15 +40,15 @@ func New(cfg config.CMetalConfig, dao store.Dao) loader.Loader {
 	fuseTriggers := make([]common.FuseTrigger, 0)
 	fuseTriggers = append(fuseTriggers,
 		common.NewFuseTrigger("APP", 1, func(kind string, err error) {
-			log.Fatalln("Fuse triggered for %s: %#v\n", kind, err)
+			loader.fuseHandler(kind, err)
 		}))
 	fuseTriggers = append(fuseTriggers,
 		common.NewFuseTrigger("HTTP", 10, func(kind string, err error) {
-			log.Fatalf("Fuse triggered for %s: %#v\n", kind, err)
+			loader.fuseHandler(kind, err)
 		}))
 	fuseTriggers = append(fuseTriggers,
 		common.NewFuseTrigger("PARSE", 1, func(kind string, err error) {
-			log.Fatalf("Fuse triggered for %s: %#v\n", kind, err)
+			loader.fuseHandler(kind, err)
 		}))
 	loader.fuse = common.NewFuse(fuseTriggers)
 	return loader
@@ -78,6 +78,11 @@ func (l *CMetalLoader) Start() error {
 func (l *CMetalLoader) Stop() {
 	log.Println("Loader stopping")
 	close(l.done)
+}
+
+func (l *CMetalLoader) fuseHandler(kind string, err error) {
+	fmt.Fprintf(os.Stderr, "loader failed due %s error: %#v\n", kind, err)
+	l.Stop()
 }
 
 func (l *CMetalLoader) do() error {

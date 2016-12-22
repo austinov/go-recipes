@@ -91,9 +91,13 @@ func fillQuery(q *Query, p param) {
 
 func parseDate(d string) *time.Time {
 	layouts := []string{
+		"2.01.2006",
 		"02.01.2006",
+		"2/01/2006",
 		"02/01/2006",
+		"2 Jan 2006",
 		"02 Jan 2006",
+		"2 January 2006",
 		"02 January 2006",
 	}
 	for _, l := range layouts {
