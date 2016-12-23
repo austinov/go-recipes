@@ -12,7 +12,7 @@ db:
   connection-string: "dbname=cmetal host=pgdb sslmode=disable user=postgres" 
   #connection-string: "dbname=cmetal host=/run/postgresql/" 
 
-# Configuration of loader data from http://concerts-metal.com
+# Configuration of loader data from http://www.concerts-metal.com
 cmetal:
   base-url: http://en.concerts-metal.com/
   # frequency run the loader

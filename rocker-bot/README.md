@@ -27,7 +27,9 @@ To run the bot without using the Docker,
 specify the connection string to your PostgreSQL in bot.yaml and just run:
 
 ```
-	$ cd github.com/austinov/go-recipes/rocker-bot
+	$ cd github.com/austinov/go-recipes
+	$ glide up
+	$ cd ./rocker-bot
 	$ go run main.go -config ./bot.yaml
 ```
 
