@@ -1,8 +1,8 @@
-hash: c7132f69475171e953a15da7541255dbcdd334a217d3395e45c2aae2fad9f003
-updated: 2016-12-20T21:50:33.794605031+03:00
+hash: b5a2fb081fcda25115031f2f7e368d09c6f57561804a663136884c267d62234a
+updated: 2016-12-31T12:16:42.386350414+03:00
 imports:
 - name: github.com/andybalholm/cascadia
-  version: 196d48ce4ae8cf1c8f87088d2884eca214240887
+  version: 349dd0209470eabd9514242c688c403c0926d266
 - name: github.com/jroimartin/gocui
   version: 7ac95c981b8a07b624ab197b3ad5813fdfbe4864
 - name: github.com/lib/pq
@@ -14,13 +14,18 @@ imports:
 - name: github.com/nsf/termbox-go
   version: abe82ce5fb7a42fbd6784a5ceb71aff977e09ed8
 - name: github.com/PuerkitoBio/goquery
-  version: 152b1a2c8f5d0340f658bb656032a39b94e52958
+  version: 3cb3b8656883c2cc3deb9c643d93ea6e5157e425
 - name: github.com/ugorji/go
   version: 9c7f9b7a2bc3a520f7c7b30b34b7f85f47fe27b6
   subpackages:
   - codec
+- name: golang.org/x/crypto
+  version: f6b343c37ca80bfa8ea539da67a0b621f84fab1d
+  subpackages:
+  - bcrypt
+  - blowfish
 - name: golang.org/x/net
-  version: 45e771701b814666a7eb299e6c7a57d0b1799e91
+  version: 8fd7f25955530b92e73e9e1932a41b522b22ccd9
   subpackages:
   - html
   - html/atom
