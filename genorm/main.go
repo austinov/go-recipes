@@ -55,16 +55,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("%s: %s", arg, err)
 		}
-		if dstPath == "" {
+		if newPath == "" {
 			newPath = pack.Dir
 		}
-		if dstPack == "" {
-			newPack = pack.Name
+		if newPack == "" {
+			if newPack, err = getTargetPackageName(pack, dstPath); err != nil {
+				log.Fatalf("%s: %s", arg, err)
+			}
 		}
-
-		importPath := ""
-		if pack.ImportPath != "" && pack.ImportPath != "." {
-			importPath = fmt.Sprintf("\n%q", pack.ImportPath)
+		importPath, err := getImportPath(pack, newPath)
+		if err != nil {
+			log.Fatalf("%s: %s", arg, err)
 		}
 		var changed bool
 		for _, f := range pack.GoFiles {
@@ -79,6 +80,50 @@ func main() {
 			gofmt(pack.Dir)
 		}
 	}
+}
+
+// getTargetPackageName determines target package name from destination path
+func getTargetPackageName(pack *build.Package, newPath string) (string, error) {
+	if newPath == "" {
+		return pack.Name, nil
+	}
+	dstAbsPath, err := filepath.Abs(newPath)
+	if err != nil {
+		return "", err
+	}
+	if indx := strings.LastIndex(dstAbsPath, string(filepath.Separator)); indx >= 0 {
+		return dstAbsPath[indx+1:], nil
+	}
+	return pack.Name, nil
+}
+
+// getImportPath determines additional import path from destination path
+func getImportPath(pack *build.Package, newPath string) (string, error) {
+	importPath := ""
+	if pack.ImportPath != "" && pack.ImportPath != "." {
+		importPath = fmt.Sprintf("\n%q", pack.ImportPath)
+	}
+	if importPath != "" {
+		return importPath, nil
+	}
+	srcAbsPath, err := filepath.Abs(pack.Dir)
+	if err != nil {
+		return "", err
+	}
+	dstAbsPath, err := filepath.Abs(newPath)
+	if err != nil {
+		return "", err
+	}
+	if srcAbsPath == dstAbsPath {
+		return "", nil
+	}
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		return "", fmt.Errorf("unable determine import path, please set GOPATH variable")
+	}
+	sep := string(filepath.Separator)
+	importPath = strings.TrimPrefix(srcAbsPath, gopath+sep+"src"+sep)
+	return fmt.Sprintf("\n%q", importPath), nil
 }
 
 func processFile(path, file, pack, newPath, newPack, importPath string) error {
