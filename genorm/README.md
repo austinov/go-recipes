@@ -1,6 +1,6 @@
 # genorm 
 
-genorm is a simple utility to generate of dao code by model structs.
+genorm is a simple utility to generate of dao code by model structs from AST.
 
 It was inspired by awesome [reform](https://github.com/go-reform/reform) and uses some pieces of the code.
 Genorm id much simpler than reform and it's made for specific task in another project.
@@ -40,7 +40,7 @@ To use:
 ```
 
 Flags:
-  - dst-path - destination path to store files
-  - dst-pack - destination package name
+  - dst-path - destination path to store files (if omitted will used source directories)
+  - dst-pack - destination package name (if omitted will used name from destination path)
 
 For example, after run `./genorm ./example` result of code generation for `./example/model.go` is presented in `./example/model_genorm.go`.

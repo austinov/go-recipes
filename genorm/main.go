@@ -25,8 +25,8 @@ func main() {
 		dstPath string
 		dstPack string
 	)
-	flag.StringVar(&dstPath, "dst-path", "", "destination path to store files")
-	flag.StringVar(&dstPack, "dst-pack", "", "destination package name")
+	flag.StringVar(&dstPath, "dst-path", "", "destination path to store files (if omitted will used source directories)")
+	flag.StringVar(&dstPack, "dst-pack", "", "destination package name (if omitted will used name from destination path)")
 	flag.Parse()
 
 	wd, err := os.Getwd()
