@@ -218,3 +218,12 @@ func (si StructInfo) QueryRowUpdate() string {
 	fields += ",\nt." + si.Fields[si.PKIndex].Name
 	return fields
 }
+
+func (si StructInfo) NeedImportTime() bool {
+	for _, f := range si.Fields {
+		if f.Column == "created_at" || f.Column == "updated_at" {
+			return true
+		}
+	}
+	return false
+}

@@ -3,7 +3,6 @@ package example
 
 import (
 	"database/sql"
-	"time"
 )
 
 const (

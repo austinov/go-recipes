@@ -146,6 +146,12 @@ func processFile(path, file, pack, newPath, newPack, importPath string) error {
 	}
 	defer f.Close()
 
+	for _, s := range structs {
+		if s.NeedImportTime() {
+			importPath += "\n\"time\""
+			break
+		}
+	}
 	if err = importTemplate.Execute(f, []string{newPack, importPath}); err != nil {
 		return err
 	}

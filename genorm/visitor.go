@@ -91,11 +91,8 @@ func (v *visitor) Visit(node ast.Node) (w ast.Visitor) {
 						v.errors = append(v.errors, fmt.Errorf(`%s has field with duplicate "pk" label in tag`, si.Type))
 						continue
 					}
-					switch t := field.Type.(type) {
-					case *ast.Ident:
-						pkType = t.String()
-					}
 					si.PKIndex = pkIndex
+					pkType = defineGoType(field.Type)
 				}
 
 				if field.Names != nil {
@@ -105,7 +102,7 @@ func (v *visitor) Visit(node ast.Node) (w ast.Visitor) {
 						PKType: pkType,
 					})
 				} else {
-					embedType := fmt.Sprintf("%s", field.Type)
+					embedType := defineGoType(field.Type)
 					if tp, ok := v.structs[embedType]; ok {
 						if tp.PKIndex >= 0 && si.PKIndex >= 0 {
 							v.errors = append(v.errors, fmt.Errorf(`%s has field with duplicate "pk" label in tag, it is not allowed`, embedType))
@@ -130,6 +127,18 @@ func (v *visitor) Visit(node ast.Node) (w ast.Visitor) {
 		}
 	}
 	return v
+}
+
+// defineGoType returns name of type by AST expression.
+func defineGoType(fieldType ast.Expr) string {
+	switch t := fieldType.(type) {
+	case *ast.Ident:
+		return t.String()
+	case *ast.StarExpr:
+		return defineGoType(t.X)
+	default:
+		panic(fmt.Sprintf("field type %#v unsupported", fieldType))
+	}
 }
 
 func obtainFieldTag(fieldTag *ast.BasicLit) string {

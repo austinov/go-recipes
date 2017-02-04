@@ -43,4 +43,17 @@ Flags:
   - dst-path - destination path to store files (if omitted will used source directories)
   - dst-pack - destination package name (if omitted will used name from destination path)
 
-For example, after run `./genorm ./example` result of code generation for `./example/model.go` is presented in `./example/model_genorm.go`.
+For example, after run:
+
+```
+  $ go build && ./genorm ./example
+```
+
+result of code generation for `./example/model.go` will be presented in `./example/model_genorm.go`.
+
+
+go build && ./genorm ./example/
+
+### TODO:
+
+- tests

@@ -8,7 +8,6 @@ var (
 		package {{ index . 0 }}
 
 		import (
-			"time"
 			"database/sql"
 			{{- index . 1 }}
 		)
