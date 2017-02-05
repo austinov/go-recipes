@@ -2,7 +2,7 @@
 
 termo-chat is a simple chat in a terminal.
 
-![termo-chat](https://raw.githubusercontent.com/austinov/go-recipes/master/termo-chat/termo-chat.png)
+![termo-chat](https://github.com/austinov/go-recipes/blob/assets/termo-chat/screenshot.png)
 
 First run the server (default on 8822 port):
 
