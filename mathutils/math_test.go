@@ -114,3 +114,42 @@ func TestIntToDigits(t *testing.T) {
 		assert.Equal(t, c.expected, IntToDigits(c.input))
 	}
 }
+
+func TestHumanBytes(t *testing.T) {
+	cases := []struct {
+		input    uint64
+		expected string
+	}{
+		{
+			input:    0,
+			expected: "0 B",
+		},
+		{
+			input:    1023,
+			expected: "1023 B",
+		},
+		{
+			input:    1046,
+			expected: "1.02 KB",
+		},
+		{
+			input:    11838423,
+			expected: "11.29 MB",
+		},
+		{
+			input:    2512555868,
+			expected: "2.34 GB",
+		},
+		{
+			input:    1715238139330,
+			expected: "1.56 TB",
+		},
+		{
+			input:    2634263381319330,
+			expected: "2.34 PB",
+		},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.expected, HumanBytes(c.input))
+	}
+}

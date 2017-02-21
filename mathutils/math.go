@@ -1,6 +1,9 @@
 package mathutils
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // CountOfDigits returns count of digits in number
 func CountOfDigits(number int64) int {
@@ -28,4 +31,15 @@ func IntToDigits(number int64) []int {
 		digits[i], digits[j] = digits[j], digits[i]
 	}
 	return digits
+}
+
+// HumanBytes returns human readable bytes count.
+func HumanBytes(bytes uint64) string {
+	var unit uint64 = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	exp := int(math.Log(float64(bytes)) / math.Log(float64(unit)))
+	pre := "KMGTPE"[exp-1 : exp]
+	return fmt.Sprintf("%.2f %sB", float64(bytes)/math.Pow(float64(unit), float64(exp)), pre)
 }
