@@ -17,4 +17,8 @@ Samples for learning Go and experimentation with new things:
 
 - **tg-bot** is a trivial telegtam bot.
 
-- **mathutils** contains several useful functions.
+- **mathutils** contains several useful math functions.
+
+- **osutils** contains several useful os functions.
+
+

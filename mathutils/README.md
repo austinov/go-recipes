@@ -1,4 +1,4 @@
 
 # mathutils
 
-mathutils contains several useful functions.
+mathutils contains several useful math functions.
