@@ -2,7 +2,6 @@
 
 Rocker is a slack bot. It shows calendar of rock-band's concerts and rock events in the cities.
 
-Here's rocker bot screenshot:
 ![rocker bot](https://github.com/austinov/go-recipes/blob/assets/rocker-bot/screenshot.gif)
 
 
