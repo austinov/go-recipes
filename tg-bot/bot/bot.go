@@ -32,9 +32,7 @@ type Bot struct {
 	offset  uint64
 	updates chan []Update
 	replies chan Reply
-
-	mu   sync.Mutex
-	done chan struct{}
+	done    chan struct{}
 }
 
 func New(token string) *Bot {
@@ -55,9 +53,7 @@ func (b *Bot) Start() {
 
 	b.updates = make(chan []Update, numPollers)
 	b.replies = make(chan Reply, numSenders)
-	b.mu.Lock()
 	b.done = make(chan struct{})
-	b.mu.Unlock()
 
 	var wg sync.WaitGroup
 
@@ -76,17 +72,17 @@ func (b *Bot) Start() {
 
 // Stop initiates a stop of the bot.
 func (b *Bot) Stop() {
-	b.mu.Lock()
 	close(b.done)
-	b.mu.Unlock()
 }
 
 func (b *Bot) pollUpdates(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
-		case <-b.done:
-			return
+		case _, ok := <-b.done:
+			if !ok {
+				return
+			}
 		default:
 			b.poll()
 		}
@@ -97,8 +93,10 @@ func (b *Bot) processUpdates(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
-		case <-b.done:
-			return
+		case _, ok := <-b.done:
+			if !ok {
+				return
+			}
 		case updates, ok := <-b.updates:
 			if !ok {
 				return
@@ -114,8 +112,10 @@ func (b *Bot) processReplies(wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
-		case <-b.done:
-			return
+		case _, ok := <-b.done:
+			if !ok {
+				return
+			}
 		case r, ok := <-b.replies:
 			if !ok {
 				return

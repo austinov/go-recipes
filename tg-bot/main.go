@@ -22,6 +22,7 @@ func main() {
 	log.Println("Start telegram bot.")
 	b.Start()
 
+	b = bot.New(token)
 	log.Println("Start telegram bot again.")
 	b.Start()
 }
