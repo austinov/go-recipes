@@ -11,8 +11,6 @@ Samples for learning Go and experimentation with new things:
 
 - **reflection** is for playing with reflect package.
 
-- **rocker-bot** is a slack bot. It shows calendar of rock-band's concerts and rock events in the cities.
-
 - **termo-chat** is a simple chat in a terminal.
 
 - **tg-bot** is a trivial telegtam bot.
