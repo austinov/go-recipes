@@ -51,15 +51,14 @@ func (h *NetHandler) Init(v view.View, room string) error {
 	}
 	defer h.disconnect()
 
-	dch := make(chan []byte)    // data channel
-	ech := make(chan error)     // error channel
-	done := make(chan struct{}) // done channel
+	dch := make(chan []byte) // data channel
+	ech := make(chan error)  // error channel
 
 	go func() {
-		h.handleConnection(dch, ech, done)
+		h.handleConnection(dch, ech)
 	}()
 	go func() {
-		h.processData(dch, ech, done)
+		h.processData(dch, ech)
 	}()
 
 	if room == "" {
@@ -168,57 +167,50 @@ func (h *NetHandler) checkConnection(enforce bool, ech chan<- error) bool {
 }
 
 // handleConnection reads data from connection and then push the data to dch channel
-func (h *NetHandler) handleConnection(dch chan<- []byte, ech chan<- error, done <-chan struct{}) {
+func (h *NetHandler) handleConnection(dch chan<- []byte, ech chan<- error) {
 	for {
-		select {
-		case <-done:
-			return
-		default:
-			data := make([]byte, 0)
-			for {
-				if ok := h.checkConnection(false, ech); !ok {
+		data := make([]byte, 0)
+		for {
+			if ok := h.checkConnection(false, ech); !ok {
+				break
+			}
+			if err := h.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+				ech <- err
+				if ok := h.checkConnection(true, ech); !ok {
 					break
 				}
-				if err := h.conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			}
+			buf := make([]byte, 255)
+			n, err := h.conn.Read(buf)
+			if err != nil {
+				if neterr, ok := err.(net.Error); err != io.EOF && ok && !neterr.Timeout() {
 					ech <- err
-					if ok := h.checkConnection(true, ech); !ok {
-						break
-					}
+				} else if err == io.EOF {
+					h.checkConnection(true, ech)
 				}
-				buf := make([]byte, 255)
-				n, err := h.conn.Read(buf)
-				if err != nil {
-					if neterr, ok := err.(net.Error); err != io.EOF && ok && !neterr.Timeout() {
-						ech <- err
-					} else if err == io.EOF {
-						h.checkConnection(true, ech)
-					}
-					break
-				} else {
-					if n > 0 {
-						data = append(data, buf[:n]...)
-					}
-					if n < len(buf) {
-						break
-					}
-				}
-			}
-			if len(data) > 0 {
-				dch <- data
+				break
 			} else {
-				// Take a small pause in the case of empty data or some error
-				<-time.After(time.Second)
+				if n > 0 {
+					data = append(data, buf[:n]...)
+				}
+				if n < len(buf) {
+					break
+				}
 			}
+		}
+		if len(data) > 0 {
+			dch <- data
+		} else {
+			// Take a small pause in the case of empty data or some error
+			<-time.After(time.Second)
 		}
 	}
 }
 
 // processData processes data and errors
-func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error, done <-chan struct{}) {
+func (h *NetHandler) processData(dch <-chan []byte, ech <-chan error) {
 	for {
 		select {
-		case <-done:
-			return
 		case b := <-dch:
 			msg, err := proto.Decode(b)
 			if err != nil {

@@ -8,3 +8,6 @@ before_install:
     - sudo apt-get -y install glide
 install:
     - glide up
+branches:
+  only:
+  - master

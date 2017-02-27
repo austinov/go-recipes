@@ -22,7 +22,7 @@ type (
 )
 
 var (
-	done  = make(chan bool)
+	done  = make(chan struct{})
 	msgs  = make(chan message)
 	room  = make(chan string)
 	peers = make(chan []string)
@@ -117,8 +117,10 @@ func receiveMsg(g *gocui.Gui) {
 	}
 	for {
 		select {
-		case <-done:
-			return
+		case _, ok := <-done:
+			if !ok {
+				return
+			}
 		case m := <-msgs:
 			g.Execute(func(g *gocui.Gui) error {
 				v, err := g.View("chat")
@@ -141,8 +143,10 @@ func receiveMsg(g *gocui.Gui) {
 func join(g *gocui.Gui) {
 	for {
 		select {
-		case <-done:
-			return
+		case _, ok := <-done:
+			if !ok {
+				return
+			}
 		case p := <-peers:
 			g.Execute(func(g *gocui.Gui) error {
 				v, err := g.View("peers")
@@ -298,6 +302,6 @@ func clearCmd(v *gocui.View) error {
 }
 
 func quit(g *gocui.Gui, v *gocui.View) error {
-	done <- true
+	close(done)
 	return gocui.ErrQuit
 }

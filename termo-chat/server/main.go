@@ -87,8 +87,10 @@ func main() {
 
 	for {
 		select {
-		case <-done:
-			return
+		case _, ok := <-done:
+			if !ok {
+				return
+			}
 		default:
 			conn, err := listener.Accept()
 			if err != nil {
@@ -104,8 +106,10 @@ func receive(conn net.Conn, done <-chan struct{}) {
 	defer closeConn(conn)
 	for {
 		select {
-		case <-done:
-			return
+		case _, ok := <-done:
+			if !ok {
+				return
+			}
 		default:
 			var rerr error
 			b := make([]byte, 0)
@@ -343,8 +347,10 @@ func sendError(conn net.Conn, version, action byte, err error) {
 func send(done <-chan struct{}) {
 	for {
 		select {
-		case <-done:
-			return
+		case _, ok := <-done:
+			if !ok {
+				return
+			}
 		case t := <-tch:
 			var (
 				b  []byte
