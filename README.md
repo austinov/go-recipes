@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/austinov/go-recipes.svg?branch=master)](https://travis-ci.org/austinov/go-recipes)
+
 # go-recipes
 
 Samples for learning Go and experimentation with new things:
