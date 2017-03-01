@@ -1,5 +1,5 @@
-hash: 6beefabd281e36e6d5a842c03c6d74b57f0e49794a18d65661d7ff781a6e4d4d
-updated: 2017-03-01T11:57:28.738824088+03:00
+hash: 453c0410d402d822c39b8b633510945841cbc4664d4624fac1ae7428d8067aad
+updated: 2017-03-01T13:06:13.176602761+03:00
 imports:
 - name: github.com/jroimartin/gocui
   version: 4e9ce9a8e26f2ef33dfe297dbdfca148733b6b9b
@@ -16,18 +16,6 @@ imports:
   subpackages:
   - bcrypt
   - blowfish
-- name: golang.org/x/net
-  version: 906cda9512f77671ab44f8c8563b13a8e707b230
-  subpackages:
-  - context
-- name: golang.org/x/text
-  version: 0ad425fe45e885577bef05dc1c50f72e33188b16
-  subpackages:
-  - encoding
-- name: golang.org/x/tools
-  version: 718875e4f9a39b5a303f3fa67a7dd9367b07c02f
-  subpackages:
-  - go/buildutil
 testImports:
 - name: github.com/davecgh/go-spew
   version: 6d212800a42e8ab5c146b8ace3490ee17e5225f9
