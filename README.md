@@ -21,4 +21,4 @@ Samples for learning Go and experimentation with new things:
 
 - **osutils** contains several useful os functions.
 
-
+- **flagutils** helps to distinguish if a flag was passed or not.
